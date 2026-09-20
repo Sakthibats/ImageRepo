@@ -1,0 +1,12 @@
+{
+  "name": "imagerepo",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["packages/*"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "ingest": "npm run -w @imagerepo/ingest start --",
+    "worker:dev": "npm run -w @imagerepo/worker dev",
+    "worker:deploy": "npm run -w @imagerepo/worker deploy"
+  }
+}

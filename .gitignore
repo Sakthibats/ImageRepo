@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+.env
+*.log
+
+# local ingest state + staged derivatives (never commit)
+.ingest/
+staging/
