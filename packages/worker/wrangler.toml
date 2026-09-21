@@ -3,11 +3,17 @@ main = "src/index.ts"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Keep the workers.dev hostname (needed until a custom domain is attached),
+# but turn off per-version preview URLs: they add publicly reachable hostnames
+# for every deployment, which is attack surface a private API has no use for.
+workers_dev = true
+preview_urls = false
+
 # Fill database_id from:  npx wrangler d1 create imagerepo
 [[d1_databases]]
 binding = "DB"
 database_name = "imagerepo"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "1db2d100-8323-4347-a801-6d7096adc7bb"
 
 [[r2_buckets]]
 binding = "BUCKET"
