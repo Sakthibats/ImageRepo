@@ -96,22 +96,58 @@ export async function remuxFaststart(input: string): Promise<Buffer> {
   }
 }
 
+/** Cached probe for VideoToolbox, Apple Silicon's hardware codec path. */
+let hwSupport: boolean | null = null;
+async function hasVideoToolbox(): Promise<boolean> {
+  if (hwSupport !== null) return hwSupport;
+  try {
+    const { stdout } = await run('ffmpeg', ['-hide_banner', '-encoders'], { maxBuffer: MAX_BUFFER });
+    hwSupport = stdout.includes('h264_videotoolbox');
+  } catch {
+    hwSupport = false;
+  }
+  return hwSupport;
+}
+
+const scaleFilter = `scale=-2:'min(${VIDEO_PREVIEW_HEIGHT},ih)'`;
+
 /**
  * H.264 preview for clips the browser cannot play natively (HEVC) or that are
  * too large to stream comfortably to a phone on cellular.
+ *
+ * On Apple Silicon we hardware-decode AND hardware-encode. Measured on a 27s
+ * 2688x1512 HEVC drone clip: 33.6s software vs 9.0s hardware. Most of that win
+ * is the DECODE side — software HEVC decoding, not encoding, is the bottleneck.
+ * The hardware encoder produces a file ~8% larger at the same resolution,
+ * which is irrelevant for a preview stream.
+ *
+ * Falls back to libx264 if VideoToolbox is missing or errors on this input.
  */
 export async function transcodePreview(input: string): Promise<Buffer> {
+  if (await hasVideoToolbox()) {
+    try {
+      return await encodePreview(input, true);
+    } catch {
+      // Some inputs fail hardware decode (odd pixel formats, corrupt headers).
+      // Silently fall through rather than lose the file.
+    }
+  }
+  return encodePreview(input, false);
+}
+
+async function encodePreview(input: string, hw: boolean): Promise<Buffer> {
   const out = join(tmpdir(), `ir-prev-${randomUUID()}.mp4`);
+  const args = hw
+    ? ['-v', 'error', '-hwaccel', 'videotoolbox', '-i', input,
+       '-map_metadata', '-1', '-vf', scaleFilter,
+       '-c:v', 'h264_videotoolbox', '-b:v', '2500k',
+       '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', '-y', out]
+    : ['-v', 'error', '-i', input,
+       '-map_metadata', '-1', '-vf', scaleFilter,
+       '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '24',
+       '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', '-y', out];
   try {
-    await run('ffmpeg', [
-      '-v', 'error', '-i', input,
-      '-map_metadata', '-1',
-      '-vf', `scale=-2:'min(${VIDEO_PREVIEW_HEIGHT},ih)'`,
-      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '24',
-      '-c:a', 'aac', '-b:a', '128k',
-      '-movflags', '+faststart',
-      '-y', out,
-    ], { maxBuffer: MAX_BUFFER });
+    await run('ffmpeg', args, { maxBuffer: MAX_BUFFER });
     return await readFile(out);
   } finally {
     await unlink(out).catch(() => {});

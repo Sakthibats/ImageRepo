@@ -6,9 +6,28 @@ const run = promisify(execFile);
 
 let fail = 0;
 const check = (l: string, ok: boolean, d = '') => { console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${l}${d ? '  — ' + d : ''}`); if (!ok) fail++; };
-const S = process.argv[2];
 
 console.log('\nVideo pipeline\n');
+
+/** Build fixtures into a temp dir so the suite runs with no external setup. */
+const S = process.argv[2] ?? await (async () => {
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'imagerepo-vid-'));
+  await run('ffmpeg', ['-v', 'error',
+    '-f', 'lavfi', '-i', 'testsrc=size=1280x720:rate=30:duration=3',
+    '-f', 'lavfi', '-i', 'sine=frequency=440:duration=3',
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac',
+    '-metadata', 'location=+15.4909+073.8278/',
+    '-metadata', 'com.apple.quicktime.location.ISO6709=+15.4909+073.8278/',
+    '-metadata', 'creation_time=2023-12-15T14:30:22Z',
+    '-movflags', '+faststart', '-y', join(dir, 'clip_fast.mp4')]);
+  // Same streams, but moov written at the end — the non-faststart case.
+  await run('ffmpeg', ['-v', 'error', '-i', join(dir, 'clip_fast.mp4'),
+    '-c', 'copy', '-map_metadata', '0', '-y', join(dir, 'clip_slow.mp4')]);
+  return dir;
+})();
 
 const probe = await probeVideo(`${S}/clip_fast.mp4`);
 check('probes dimensions', probe.width === 1280 && probe.height === 720, `${probe.width}x${probe.height}`);
