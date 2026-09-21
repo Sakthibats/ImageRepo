@@ -3,6 +3,8 @@ dist/
 .wrangler/
 .dev.vars
 .env
+.env.ingest
+.env
 *.log
 
 # local ingest state + staged derivatives (never commit)

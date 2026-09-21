@@ -1,0 +1,25 @@
+name = "imagerepo-api"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Fill database_id from:  npx wrangler d1 create imagerepo
+[[d1_databases]]
+binding = "DB"
+database_name = "imagerepo"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "imagerepo"
+
+[vars]
+# Your Cloudflare Access team domain, e.g. "myteam" for myteam.cloudflareaccess.com.
+# Leave blank until Access is configured — admin routes still work via ADMIN_TOKEN.
+ACCESS_TEAM = ""
+# The Access application audience (AUD) tag, from the app's settings page.
+ACCESS_AUD = ""
+
+# Secrets (never in this file):
+#   npx wrangler secret put ADMIN_TOKEN
+#   npx wrangler secret put SHARE_HMAC_KEY

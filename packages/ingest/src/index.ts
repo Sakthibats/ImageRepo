@@ -122,6 +122,9 @@ program
 
         bytes += res.uploadedBytes;
         state.setStatus(row.path, opts.dryRun ? 'processed' : 'uploaded', undefined, res.record.derivatives);
+        // Persist before attempting the POST, so a Worker outage never
+        // discards work that took CPU to produce.
+        state.saveRecord(row.path, res.record);
         batch.push(res.record);
         if (batch.length >= 200) await flush();
 
@@ -144,6 +147,49 @@ program
     await flush();
     console.log(`\n\n  done in ${fmtDur(Date.now() - started)} — ${done} processed, ${failed} failed, ${fmtBytes(bytes)}\n`);
     if (failed) console.log(`  re-run to retry failures, or 'imagerepo status' to inspect them\n`);
+    const held = state.unrecorded().length;
+    if (held) {
+      console.log(`  ${held} records held locally (worker not configured).`);
+      console.log(`  set ADMIN_API_URL + ADMIN_TOKEN, then: imagerepo flush\n`);
+    }
+    state.close();
+  });
+
+// ---------------------------------------------------------------- flush
+program
+  .command('flush')
+  .description('Send locally held metadata to the Worker. Safe to re-run.')
+  .option('--batch <n>', 'records per request', (v) => parseInt(v, 10), 200)
+  .action(async (opts) => {
+    const state = new IngestState(STATE_PATH);
+    const api = new AdminApi(loadConfig());
+    if (!api.configured) {
+      console.error('\n  ADMIN_API_URL / ADMIN_TOKEN not set in .env.ingest\n');
+      process.exit(1);
+    }
+    const held = state.unrecorded();
+    if (!held.length) { console.log('\n  nothing held — everything is recorded\n'); state.close(); return; }
+
+    const records: MediaRecord[] = held.map((h) => JSON.parse(h.record));
+    const used = new Set(records.flatMap((r) => r.albums));
+    const albums = state.albumTitles()
+      .filter((a) => used.has(a.id))
+      .map((a) => ({ id: a.id, title: a.title, seededFrom: a.title }));
+    await api.ensureAlbums(albums);
+
+    console.log(`\n  sending ${records.length} records...`);
+    let sent = 0;
+    for (let i = 0; i < records.length; i += opts.batch) {
+      const chunk = records.slice(i, i + opts.batch);
+      await api.recordMedia(chunk);
+      for (const r of chunk) {
+        const row = held.find((h) => JSON.parse(h.record).id === r.id);
+        if (row) state.setStatus(row.path, 'recorded');
+      }
+      sent += chunk.length;
+      process.stdout.write(`\r  ${sent}/${records.length}   `);
+    }
+    console.log(`\n  done — ${sent} recorded\n`);
     state.close();
   });
 
