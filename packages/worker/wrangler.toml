@@ -22,10 +22,18 @@ bucket_name = "imagerepo"
 [vars]
 # Your Cloudflare Access team domain, e.g. "myteam" for myteam.cloudflareaccess.com.
 # Leave blank until Access is configured — admin routes still work via ADMIN_TOKEN.
-ACCESS_TEAM = ""
+ACCESS_TEAM = "late-dew-7d1b"
 # The Access application audience (AUD) tag, from the app's settings page.
-ACCESS_AUD = ""
+ACCESS_AUD = "8522b25f12118db302869ff8bc23a8acbaa29b384c5cdd7fde09ffbf7f49ab53"
 
 # Secrets (never in this file):
 #   npx wrangler secret put ADMIN_TOKEN
 #   npx wrangler secret put SHARE_HMAC_KEY
+
+# The SPA is served by this same Worker, not a separate Pages project, so that
+# Cloudflare Access's CF_Authorization cookie covers both the app and the API.
+# A different origin would not receive that cookie.
+[assets]
+directory = "../web/dist"
+not_found_handling = "single-page-application"
+run_worker_first = ["/a/*", "/admin/*"]

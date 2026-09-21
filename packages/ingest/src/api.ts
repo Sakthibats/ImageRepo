@@ -10,15 +10,33 @@ export class AdminApi {
 
   get configured() { return Boolean(this.cfg.apiUrl && this.cfg.adminToken); }
 
+  /** Access service-token headers, plus our own bearer token for the Worker. */
+  private headers(extra: Record<string, string> = {}): Record<string, string> {
+    const h: Record<string, string> = {
+      authorization: `Bearer ${this.cfg.adminToken}`,
+      ...extra,
+    };
+    if (this.cfg.accessClientId && this.cfg.accessClientSecret) {
+      h['CF-Access-Client-Id'] = this.cfg.accessClientId;
+      h['CF-Access-Client-Secret'] = this.cfg.accessClientSecret;
+    }
+    return h;
+  }
+
   private async post(path: string, body: unknown) {
     const res = await fetch(`${this.cfg.apiUrl}${path}`, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'authorization': `Bearer ${this.cfg.adminToken}`,
-      },
+      headers: this.headers({ 'content-type': 'application/json' }),
       body: JSON.stringify(body),
+      redirect: 'manual',           // an Access login redirect is a failure, not a hop
     });
+    if (res.status === 302 || res.status === 301) {
+      throw new Error(
+        `${path} -> blocked by Cloudflare Access.\n` +
+        `  Set CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET in .env.ingest,\n` +
+        `  and add a Service Auth policy for that token on the Access application.`
+      );
+    }
     if (!res.ok) {
       throw new Error(`${path} -> ${res.status} ${res.statusText}: ${(await res.text()).slice(0, 300)}`);
     }
@@ -37,8 +55,12 @@ export class AdminApi {
   async health(): Promise<{ ok: boolean; error?: string }> {
     try {
       const res = await fetch(`${this.cfg.apiUrl}/admin/health`, {
-        headers: { authorization: `Bearer ${this.cfg.adminToken}` },
+        headers: this.headers(),
+        redirect: 'manual',
       });
+      if (res.status === 302 || res.status === 301) {
+        return { ok: false, error: 'blocked by Access — set CF_ACCESS_CLIENT_ID/SECRET' };
+      }
       return res.ok ? { ok: true } : { ok: false, error: `${res.status} ${res.statusText}` };
     } catch (e: any) {
       return { ok: false, error: e?.message ?? String(e) };

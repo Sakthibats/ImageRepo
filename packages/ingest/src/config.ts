@@ -7,7 +7,12 @@ export interface Config {
   accessKeyId: string;
   secretAccessKey: string;
   apiUrl: string;       // Worker admin base, e.g. https://api.photos.example.com
-  adminToken: string;   // shared secret for /admin/* while behind Access
+  adminToken: string;   // shared secret checked by the Worker itself
+  // Cloudflare Access sits in FRONT of the Worker, so a request without these
+  // is bounced to a login page and never reaches our code. A service token is
+  // how a script authenticates to Access.
+  accessClientId: string;
+  accessClientSecret: string;
 }
 
 /** Loads .env.ingest from the repo root, then overlays real env vars. */
@@ -35,6 +40,8 @@ export function loadConfig(): Config {
     secretAccessKey: get('R2_SECRET_ACCESS_KEY'),
     apiUrl: get('ADMIN_API_URL').replace(/\/$/, ''),
     adminToken: get('ADMIN_TOKEN'),
+    accessClientId: get('CF_ACCESS_CLIENT_ID'),
+    accessClientSecret: get('CF_ACCESS_CLIENT_SECRET'),
   };
 
   const missing = (['accountId', 'accessKeyId', 'secretAccessKey'] as const)

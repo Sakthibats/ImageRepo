@@ -79,6 +79,16 @@ export async function bakeAlbum(
   await write('owner', (results as any[]).map(toOwnerItem));
   await write('guest', (results as any[]).map(toGuestItem));
 
+  // Give a new album a cover so the album list is not a wall of blank tiles.
+  // Prefer a photo: a video poster is a frame grab and often less recognisable.
+  if (results.length) {
+    const rows = results as any[];
+    const pick = rows.find((r) => r.kind === 'photo') ?? rows[0];
+    await db.prepare(
+      `UPDATE albums SET cover_id = ?1 WHERE id = ?2 AND cover_id IS NULL`
+    ).bind(pick.id, albumId).run();
+  }
+
   await db.prepare(`UPDATE albums SET manifest_ver = ?1, updated_at = ?2 WHERE id = ?3`)
     .bind(ver, Math.floor(Date.now() / 1000), albumId).run();
 
