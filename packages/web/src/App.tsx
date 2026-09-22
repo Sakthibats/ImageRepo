@@ -4,8 +4,17 @@ import { fetchIndex, fetchAlbum, assetUrl, type AlbumSummary } from './api.ts';
 import { thumbhashUrl } from './thumbhash.ts';
 import { PhotoGrid } from './components/PhotoGrid.tsx';
 import { Lightbox } from './components/Lightbox.tsx';
+import { ShareView } from './components/ShareView.tsx';
+import { shareTokenFromPath } from './share.ts';
 
 export default function App() {
+  // A /s/<token> URL is the guest experience; everything else is the owner app.
+  const shareToken = shareTokenFromPath();
+  if (shareToken) return <ShareView token={shareToken} />;
+  return <OwnerApp />;
+}
+
+function OwnerApp() {
   const [albums, setAlbums] = useState<AlbumSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<AlbumSummary | null>(null);
@@ -76,7 +85,8 @@ export default function App() {
 
       {!items
         ? <p className="muted center">Loading…</p>
-        : <PhotoGrid items={items} onOpen={setLightbox} />}
+        : <PhotoGrid items={items} onOpen={setLightbox}
+                     urlFor={(it, v) => assetUrl(it.id, v)} />}
 
       {items && lightbox !== null && (
         <Lightbox
@@ -84,6 +94,7 @@ export default function App() {
           index={lightbox}
           onClose={() => setLightbox(null)}
           onIndex={setLightbox}
+          urlFor={(it, v) => assetUrl(it.id, v)}
         />
       )}
     </main>

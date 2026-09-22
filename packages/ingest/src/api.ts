@@ -52,6 +52,40 @@ export class AdminApi {
     return this.post('/admin/albums/ensure', { albums });
   }
 
+  createShare(opts: {
+    albumId: string; label?: string; expiresInDays?: number;
+    passcode?: string; allowDownload?: boolean;
+  }) {
+    return this.post('/admin/shares', opts) as Promise<{
+      url: string; token: string; tokenHash: string;
+      expiresAt: number | null; hasPasscode: boolean; allowDownload: boolean;
+    }>;
+  }
+
+  revokeShare(tokenHash: string) {
+    return this.post(`/admin/shares/${tokenHash}/revoke`, {});
+  }
+
+  async listShares() {
+    const res = await fetch(`${this.cfg.apiUrl}/admin/shares`, {
+      headers: this.headers(), redirect: 'manual',
+    });
+    if (!res.ok) throw new Error(`/admin/shares -> ${res.status}`);
+    return res.json() as Promise<{ shares: any[] }>;
+  }
+
+  async listAlbums() {
+    const res = await fetch(`${this.cfg.apiUrl}/admin/albums`, {
+      headers: this.headers(), redirect: 'manual',
+    });
+    if (!res.ok) throw new Error(`/admin/albums -> ${res.status}`);
+    return res.json() as Promise<{ albums: any[] }>;
+  }
+
+  bake(album?: string) {
+    return this.post('/admin/bake', album ? { album } : {});
+  }
+
   async health(): Promise<{ ok: boolean; error?: string }> {
     try {
       const res = await fetch(`${this.cfg.apiUrl}/admin/health`, {

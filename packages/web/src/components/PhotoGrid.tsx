@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ManifestItem } from '@imagerepo/shared';
 import { justify } from '../layout.ts';
-import { assetUrl, pickWidth } from '../api.ts';
+import { pickWidth } from '../api.ts';
 import { thumbhashUrl } from '../thumbhash.ts';
 
 const OVERSCAN = 800;   // px of off-screen rows to keep mounted
 
+export type UrlFor = (item: ManifestItem, variant: string) => string;
+
 export function PhotoGrid({
-  items, onOpen,
-}: { items: ManifestItem[]; onOpen: (index: number) => void }) {
+  items, onOpen, urlFor,
+}: { items: ManifestItem[]; onOpen: (index: number) => void; urlFor: UrlFor }) {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
@@ -68,6 +70,7 @@ export function PhotoGrid({
             height={laid.height}
             left={laid.left}
             top={row.top}
+            urlFor={urlFor}
             onClick={() => onOpen(rowStartIndex[i] + j)}
           />
         )),
@@ -77,10 +80,10 @@ export function PhotoGrid({
 }
 
 function Tile({
-  item, width, height, left, top, onClick,
+  item, width, height, left, top, onClick, urlFor,
 }: {
   item: ManifestItem; width: number; height: number;
-  left: number; top: number; onClick: () => void;
+  left: number; top: number; onClick: () => void; urlFor: UrlFor;
 }) {
   const [loaded, setLoaded] = useState(false);
   const placeholder = thumbhashUrl(item.th);
@@ -99,7 +102,7 @@ function Tile({
       )}
       <img
         className="tile-img"
-        src={assetUrl(item.id, String(variant))}
+        src={urlFor(item, String(variant))}
         width={width}
         height={height}
         loading="lazy"

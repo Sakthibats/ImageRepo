@@ -5,6 +5,7 @@ export interface Env {
   SHARE_HMAC_KEY?: string;
   ACCESS_TEAM?: string;
   ACCESS_AUD?: string;
+  ASSETS: Fetcher;
 }
 
 /** Who is making this request, and what may they see? */

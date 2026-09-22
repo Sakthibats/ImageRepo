@@ -193,6 +193,95 @@ program
     state.close();
   });
 
+// ---------------------------------------------------------------- share
+const share = program.command('share').description('Manage read-only share links.');
+
+share
+  .command('create')
+  .description('Mint a share link for an album. The URL is shown once.')
+  .argument('<album>', 'album id (see: imagerepo share albums)')
+  .option('--label <text>', 'a note for yourself, e.g. "sent to mum"')
+  .option('--days <n>', 'expire after N days', (v) => parseFloat(v))
+  .option('--passcode <text>', 'require a passcode')
+  .option('--no-download', 'viewers can browse but not download originals')
+  .action(async (album: string, opts) => {
+    const api = new AdminApi(loadConfig());
+    const r = await api.createShare({
+      albumId: album,
+      label: opts.label,
+      expiresInDays: opts.days,
+      passcode: opts.passcode,
+      allowDownload: opts.download !== false,
+    });
+    console.log(`\n  ${r.url}\n`);
+    console.log(`  album      ${album}`);
+    console.log(`  expires    ${r.expiresAt ? new Date(r.expiresAt * 1000).toLocaleString() : 'never'}`);
+    console.log(`  passcode   ${r.hasPasscode ? 'yes' : 'no'}`);
+    console.log(`  downloads  ${r.allowDownload ? 'allowed' : 'blocked'}`);
+    console.log(`  revoke     imagerepo share revoke ${r.tokenHash.slice(0, 16)}…`);
+    console.log(`\n  The link is not stored anywhere — copy it now.\n`);
+  });
+
+share
+  .command('list')
+  .description('List share links and their status.')
+  .action(async () => {
+    const api = new AdminApi(loadConfig());
+    const { shares } = await api.listShares();
+    if (!shares.length) { console.log('\n  no share links\n'); return; }
+    const now = Math.floor(Date.now() / 1000);
+    console.log();
+    for (const s of shares) {
+      const state = s.revoked ? 'revoked'
+        : s.expires_at && s.expires_at < now ? 'expired' : 'active';
+      console.log(
+        `  ${state.padEnd(8)} ${String(s.album_id).padEnd(14)} ` +
+        `views=${String(s.view_count).padStart(4)}  ` +
+        `${s.has_passcode ? 'passcode ' : '         '}` +
+        `${s.allow_download ? 'dl ' : '   '} ` +
+        `${s.label ?? ''}`
+      );
+      console.log(`           ${s.token_hash.slice(0, 24)}…`);
+    }
+    console.log();
+  });
+
+share
+  .command('revoke')
+  .description('Revoke a link immediately. Accepts a token-hash prefix.')
+  .argument('<tokenHashPrefix>')
+  .action(async (prefix: string) => {
+    const api = new AdminApi(loadConfig());
+    const { shares } = await api.listShares();
+    const hits = shares.filter((s) => String(s.token_hash).startsWith(prefix.replace(/\u2026|\.\.\./g, '')));
+    if (!hits.length) { console.error(`\n  no share matching "${prefix}"\n`); process.exit(1); }
+    if (hits.length > 1) { console.error(`\n  "${prefix}" matches ${hits.length} shares — be more specific\n`); process.exit(1); }
+    await api.revokeShare(hits[0].token_hash);
+    console.log(`\n  revoked — album "${hits[0].album_id}"${hits[0].label ? ` (${hits[0].label})` : ''}\n`);
+  });
+
+share
+  .command('albums')
+  .description('List albums you can share.')
+  .action(async () => {
+    const api = new AdminApi(loadConfig());
+    const { albums } = await api.listAlbums();
+    console.log();
+    for (const a of albums) console.log(`  ${String(a.id).padEnd(20)} ${String(a.n).padStart(5)} items   ${a.title}`);
+    console.log();
+  });
+
+// ---------------------------------------------------------------- bake
+program
+  .command('bake')
+  .description('Regenerate album manifests.')
+  .argument('[album]', 'one album, or all if omitted')
+  .action(async (album?: string) => {
+    const api = new AdminApi(loadConfig());
+    const r = await api.bake(album) as any;
+    console.log(`\n  baked ${r.baked?.length ?? 0} album(s)\n`);
+  });
+
 // --------------------------------------------------------------- status
 program
   .command('status')

@@ -1,15 +1,17 @@
 import { useEffect, useRef } from 'react';
 import type { OwnerManifestItem } from '@imagerepo/shared';
-import { assetUrl } from '../api.ts';
+import type { UrlFor } from './PhotoGrid.tsx';
 import { thumbhashUrl } from '../thumbhash.ts';
 
 export function Lightbox({
-  items, index, onClose, onIndex,
+  items, index, onClose, onIndex, urlFor, allowDownload = true,
 }: {
   items: OwnerManifestItem[];
   index: number;
   onClose: () => void;
   onIndex: (i: number) => void;
+  urlFor: UrlFor;
+  allowDownload?: boolean;
 }) {
   const item = items[index];
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -35,9 +37,9 @@ export function Lightbox({
   useEffect(() => {
     for (const i of [index + 1, index - 1]) {
       const n = items[i];
-      if (n && n.k === 'photo') new Image().src = assetUrl(n.id, '2048');
+      if (n && n.k === 'photo') new Image().src = urlFor(n, '2048');
     }
-  }, [index, items]);
+  }, [index, items, urlFor]);
 
   if (!item) return null;
 
@@ -51,16 +53,16 @@ export function Lightbox({
             controls
             autoPlay
             playsInline
-            poster={assetUrl(item.id, 'poster')}
+            poster={urlFor(item, 'poster')}
             // The preview is H.264; the original may be HEVC and unplayable
             // outside Safari, so the browser gets the transcode first.
-            src={assetUrl(item.id, 'preview')}
+            src={urlFor(item, 'preview')}
           />
         ) : (
           <img
             key={item.id}
             className="lb-media"
-            src={assetUrl(item.id, '2048')}
+            src={urlFor(item, '2048')}
             alt=""
             style={{ backgroundImage: `url(${thumbhashUrl(item.th) ?? ''})` }}
           />
@@ -73,7 +75,9 @@ export function Lightbox({
           {item.t ? ` · ${new Date(item.t * 1000).toLocaleDateString()}` : ''}
           {item.place ? ` · ${item.place}` : ''}
         </span>
-        <a className="lb-btn" href={assetUrl(item.id, 'orig')} download>Download original</a>
+        {allowDownload && (
+          <a className="lb-btn" href={urlFor(item, 'orig')} download>Download original</a>
+        )}
         <button ref={closeRef} className="lb-btn" onClick={onClose} aria-label="Close">Close</button>
       </div>
 
