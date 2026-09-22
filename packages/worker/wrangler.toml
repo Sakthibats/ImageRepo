@@ -35,5 +35,8 @@ ACCESS_AUD = "8522b25f12118db302869ff8bc23a8acbaa29b384c5cdd7fde09ffbf7f49ab53"
 # A different origin would not receive that cookie.
 [assets]
 directory = "../web/dist"
+# Named binding is required for env.ASSETS.fetch(), which the /s/:token route
+# uses to hand the app shell to a guest.
+binding = "ASSETS"
 not_found_handling = "single-page-application"
 run_worker_first = ["/a/*", "/admin/*", "/s/*"]
