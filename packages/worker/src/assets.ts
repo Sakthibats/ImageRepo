@@ -51,9 +51,9 @@ assets.get('/:id/:variant', async (c) => {
   if (!VARIANTS.has(variant)) return c.json({ error: 'bad variant' }, 400);
 
   const row = await c.env.DB
-    .prepare('SELECT id, kind, ext, orig_name FROM media WHERE id = ?1')
+    .prepare('SELECT id, kind, ext, drv_ext, orig_name FROM media WHERE id = ?1')
     .bind(id)
-    .first<{ id: string; kind: string; ext: string; orig_name: string | null }>();
+    .first<{ id: string; kind: string; ext: string; drv_ext: string; orig_name: string | null }>();
   if (!row) return c.json({ error: 'not found' }, 404);
 
   const { key, type } = resolveKey(row, variant);
@@ -104,14 +104,17 @@ function downloadName(row: { id: string; kind: string; ext: string; orig_name: s
   return safe || fallback;
 }
 
-function resolveKey(row: { id: string; kind: string; ext: string }, variant: string) {
+function resolveKey(row: { id: string; kind: string; ext: string; drv_ext?: string }, variant: string) {
   if (variant === 'orig') {
     const ext = row.kind === 'video' ? 'mp4' : row.ext;
     return { key: `orig/${row.id}.${ext}`, type: row.kind === 'video' ? 'video/mp4' : 'image/jpeg' };
   }
   if (variant === 'poster') return { key: `post/${row.id}.jpg`, type: 'image/jpeg' };
   if (variant === 'preview') return { key: `prev/${row.id}.mp4`, type: 'video/mp4' };
-  return { key: `drv/${row.id}/${variant}.avif`, type: 'image/avif' };
+  // Browser uploads encode with canvas, which cannot reliably emit AVIF, so
+  // the format is recorded per media rather than assumed.
+  const dx = row.drv_ext || 'avif';
+  return { key: `drv/${row.id}/${variant}.${dx}`, type: dx === 'avif' ? 'image/avif' : `image/${dx}` };
 }
 
 /** "bytes=100-200" -> R2 range. Open-ended and suffix forms both appear in the wild. */

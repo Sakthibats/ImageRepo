@@ -4,11 +4,17 @@ import type { MediaRecord } from '@imagerepo/shared';
 import { requireAdmin } from './auth.js';
 import { upsertAlbums, ensureAlbumRows, insertMedia, listAlbums } from './db.js';
 import { bakeAlbum, bakeIndex } from './manifest.js';
+import { mutations } from './mutations.js';
+import { upload } from './upload.js';
 
 const MAX_RECORDS_PER_CALL = 500;
 
 export const admin = new Hono<{ Bindings: Env }>();
 admin.use('*', requireAdmin());
+
+// Owner-only mutations (albums, media, deletes).
+admin.route('/', mutations);
+admin.route('/upload', upload);
 
 admin.get('/health', async (c) => {
   // Prove both bindings actually work, not just that the Worker is up.

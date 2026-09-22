@@ -111,16 +111,16 @@ guest.get('/:token/a/:id/:variant', async (c) => {
   }
 
   const row = await c.env.DB
-    .prepare('SELECT id, kind, ext, orig_name FROM media WHERE id = ?1')
+    .prepare('SELECT id, kind, ext, drv_ext, orig_name FROM media WHERE id = ?1')
     .bind(id)
-    .first<{ id: string; kind: string; ext: string; orig_name: string | null }>();
+    .first<{ id: string; kind: string; ext: string; drv_ext: string; orig_name: string | null }>();
   if (!row) return c.json({ error: 'not found' }, 404, noStore);
 
   const key = variant === 'orig'
     ? `orig/${row.id}.${row.kind === 'video' ? 'mp4' : row.ext}`
     : variant === 'poster' ? `post/${row.id}.jpg`
     : variant === 'preview' ? `prev/${row.id}.mp4`
-    : `drv/${row.id}/${variant}.avif`;
+    : `drv/${row.id}/${variant}.${row.drv_ext || 'avif'}`;
 
   const rangeHeader = c.req.header('range');
   const range = rangeHeader ? parseRange(rangeHeader) : undefined;
@@ -128,7 +128,7 @@ guest.get('/:token/a/:id/:variant', async (c) => {
   if (!obj || !('body' in obj)) return c.json({ error: 'object missing' }, 404, noStore);
 
   const headers = new Headers();
-  headers.set('content-type', contentTypeFor(variant, row.kind));
+  headers.set('content-type', contentTypeFor(variant, row.kind, row.drv_ext));
   // Cacheable, but only within the tag's bucket window.
   headers.set('cache-control', 'public, max-age=3600');
   headers.set('etag', obj.httpEtag);
@@ -152,11 +152,11 @@ guest.get('/:token/a/:id/:variant', async (c) => {
   return new Response(obj.body, { status: 200, headers });
 });
 
-function contentTypeFor(variant: string, kind: string): string {
+function contentTypeFor(variant: string, kind: string, drvExt = 'avif'): string {
   if (variant === 'orig') return kind === 'video' ? 'video/mp4' : 'image/jpeg';
   if (variant === 'poster') return 'image/jpeg';
   if (variant === 'preview') return 'video/mp4';
-  return 'image/avif';
+  return drvExt === 'avif' ? 'image/avif' : `image/${drvExt}`;
 }
 
 function parseRange(header: string): R2Range | undefined {

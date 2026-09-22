@@ -9,8 +9,15 @@ const OVERSCAN = 800;   // px of off-screen rows to keep mounted
 export type UrlFor = (item: ManifestItem, variant: string) => string;
 
 export function PhotoGrid({
-  items, onOpen, urlFor,
-}: { items: ManifestItem[]; onOpen: (index: number) => void; urlFor: UrlFor }) {
+  items, onOpen, urlFor, selection, onToggle,
+}: {
+  items: ManifestItem[];
+  onOpen: (index: number) => void;
+  urlFor: UrlFor;
+  /** Present only in admin mode; guests never receive these. */
+  selection?: Set<string>;
+  onToggle?: (id: string, index: number, shiftKey: boolean) => void;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
@@ -71,6 +78,10 @@ export function PhotoGrid({
             left={laid.left}
             top={row.top}
             urlFor={urlFor}
+            index={rowStartIndex[i] + j}
+            selected={selection?.has(laid.item.id) ?? false}
+            selectable={Boolean(onToggle)}
+            onToggle={onToggle}
             onClick={() => onOpen(rowStartIndex[i] + j)}
           />
         )),
@@ -81,20 +92,34 @@ export function PhotoGrid({
 
 function Tile({
   item, width, height, left, top, onClick, urlFor,
+  index, selected, selectable, onToggle,
 }: {
   item: ManifestItem; width: number; height: number;
   left: number; top: number; onClick: () => void; urlFor: UrlFor;
+  index: number; selected: boolean; selectable: boolean;
+  onToggle?: (id: string, index: number, shiftKey: boolean) => void;
 }) {
   const [loaded, setLoaded] = useState(false);
   const placeholder = thumbhashUrl(item.th);
   const variant = pickWidth(width);
 
   return (
-    <button
-      className="tile"
+    <div
+      className={`tile ${selected ? 'selected' : ''}`}
       style={{ width, height, left, top }}
-      onClick={onClick}
-      aria-label={item.k === 'video' ? 'Open video' : 'Open photo'}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
+      // Once anything is selected, a plain click extends the selection rather
+      // than opening the lightbox — the behaviour people expect from a picker.
+      onClick={(e) => {
+        if (selectable && onToggle && (selected || e.metaKey || e.ctrlKey || e.shiftKey)) {
+          onToggle(item.id, index, e.shiftKey);
+        } else {
+          onClick();
+        }
+      }}
+      aria-label={item.k === 'video' ? 'Video' : 'Photo'}
     >
       {placeholder && (
         <img className="tile-ph" src={placeholder} alt="" aria-hidden="true"
@@ -114,7 +139,17 @@ function Tile({
       {item.k === 'video' && (
         <span className="tile-badge">{formatDuration(item.d)}</span>
       )}
-    </button>
+      {selectable && (
+        <button
+          className={`tile-check ${selected ? 'on' : ''}`}
+          onClick={(e) => { e.stopPropagation(); onToggle?.(item.id, index, e.shiftKey); }}
+          aria-label={selected ? 'Deselect' : 'Select'}
+          aria-pressed={selected}
+        >
+          {selected ? '✓' : ''}
+        </button>
+      )}
+    </div>
   );
 }
 
