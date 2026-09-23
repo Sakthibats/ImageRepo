@@ -25,7 +25,7 @@ export function justify(
   items: ManifestItem[],
   containerWidth: number,
   targetHeight = 240,
-  gap = 4,
+  gap = 7,
 ): { rows: Row[]; totalHeight: number } {
   const rows: Row[] = [];
   let run: ManifestItem[] = [];

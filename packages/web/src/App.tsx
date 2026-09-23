@@ -17,6 +17,12 @@ export default function App() {
   return <OwnerApp />;
 }
 
+/** Most recent album first; empty albums sink, then alphabetical as a tiebreak. */
+function sortAlbums(albums: AlbumSummary[]): AlbumSummary[] {
+  return [...albums].sort((a, b) =>
+    (b.newest ?? 0) - (a.newest ?? 0) || a.title.localeCompare(b.title));
+}
+
 type Dialog =
   | { kind: 'none' }
   | { kind: 'share'; album: AlbumSummary }
@@ -45,7 +51,7 @@ function OwnerApp() {
   const loadIndex = useCallback(async () => {
     try {
       const d = await fetchIndex();
-      setAlbums(d.albums);
+      setAlbums(sortAlbums(d.albums));
       setOpen((cur) => (cur ? d.albums.find((a) => a.id === cur.id) ?? null : null));
     } catch (e) { setError((e as Error).message); }
   }, []);
@@ -64,7 +70,7 @@ function OwnerApp() {
   const refresh = useCallback(async () => {
     const d = await fetchIndex().catch(() => null);
     if (!d) return;
-    setAlbums(d.albums);
+    setAlbums(sortAlbums(d.albums));
     const updated = open ? d.albums.find((a) => a.id === open.id) ?? null : null;
     setOpen(updated);
     await reloadAlbum(updated);
@@ -109,13 +115,26 @@ function OwnerApp() {
         <header className="head">
           <h1>Photos</h1>
           <span className="muted">
-            {albums.length} albums · {albums.reduce((n, a) => n + a.n, 0)} items
+            {albums.length === 1 ? '1 album' : `${albums.length} albums`}
+            {' · '}
+            {albums.reduce((n, a) => n + a.n, 0).toLocaleString()} photos & videos
           </span>
           <button className="btn primary small push"
                   onClick={() => { setText(''); setDialog({ kind: 'newAlbum' }); }}>
             New album
           </button>
         </header>
+
+        {!albums.length && (
+          <div className="empty fade-in">
+            <div className="empty-art">🌿</div>
+            <h2>No albums yet</h2>
+            <p className="muted">Create one, then drop some photos in.</p>
+            <button className="btn primary" onClick={() => { setText(''); setDialog({ kind: 'newAlbum' }); }}>
+              Create your first album
+            </button>
+          </div>
+        )}
 
         <div className="albums">
           {albums.map((a) => (
@@ -168,7 +187,13 @@ function OwnerApp() {
       <Uploader albumId={open.id} onDone={() => { void refresh(); notify('Upload complete'); }} />
 
       {!items ? <p className="muted center">Loading…</p>
-        : !items.length ? <p className="muted center">This album is empty.</p>
+        : !items.length ? (
+          <div className="empty fade-in">
+            <div className="empty-art">📷</div>
+            <h2>Nothing here yet</h2>
+            <p className="muted">Drop photos above to fill this album.</p>
+          </div>
+        )
         : <PhotoGrid items={items} onOpen={setLightbox}
                      urlFor={(it, v) => assetUrl(it.id, v)}
                      selection={selection} onToggle={toggle} />}

@@ -23,14 +23,34 @@ export function Lightbox({
       else if (e.key === 'ArrowLeft') onIndex(Math.max(index - 1, 0));
     };
     window.addEventListener('keydown', onKey);
-    // Lock background scroll while the overlay is up.
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    // Lock background scroll while the overlay is up. Pinning the body to a
+    // negative offset keeps the page from jumping to the top, which is what
+    // overflow:hidden alone does on iOS — and restores the exact position on
+    // close, so closing the lightbox leaves you where you were in the grid.
+    const scrollY = window.scrollY;
+    const { body } = document;
+    const prev = { position: body.style.position, top: body.style.top, width: body.style.width, overflow: body.style.overflow };
+    body.style.position = 'fixed';
+    body.style.top = `-${scrollY}px`;
+    body.style.width = '100%';
+    body.style.overflow = 'hidden';
     closeRef.current?.focus();
     return () => {
       window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prev;
+      Object.assign(body.style, prev);
+      window.scrollTo(0, scrollY);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      else if (e.key === 'ArrowRight') onIndex(Math.min(index + 1, items.length - 1));
+      else if (e.key === 'ArrowLeft') onIndex(Math.max(index - 1, 0));
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, [index, items.length, onClose, onIndex]);
 
   // Prefetch neighbours — this is what makes paging feel instant.
@@ -72,7 +92,8 @@ export function Lightbox({
       <div className="lb-bar" onClick={(e) => e.stopPropagation()}>
         <span className="lb-meta">
           {index + 1} / {items.length}
-          {item.t ? ` · ${new Date(item.t * 1000).toLocaleDateString()}` : ''}
+          {item.t ? ` · ${new Date(item.t * 1000).toLocaleDateString(undefined,
+            { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}
           {item.place ? ` · ${item.place}` : ''}
         </span>
         {allowDownload && (

@@ -3,6 +3,7 @@ import type { AlbumManifest, OwnerManifestItem } from '@imagerepo/shared';
 export interface AlbumSummary {
   id: string; title: string; n: number;
   cover: string | null; ver: string | null; updated: number;
+  newest: number | null;
 }
 
 /**

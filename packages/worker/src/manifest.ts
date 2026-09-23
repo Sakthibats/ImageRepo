@@ -114,6 +114,7 @@ export async function bakeIndex(db: D1Database, bucket: R2Bucket): Promise<numbe
         cover: a.cover_id,
         ver: a.manifest_ver,
         updated: a.updated_at,
+        newest: a.newest ?? null,
       })),
     };
     await bucket.put(indexKey(audience, 'current'), JSON.stringify(body), {
