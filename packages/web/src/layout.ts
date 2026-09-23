@@ -24,8 +24,8 @@ export interface Row {
 export function justify(
   items: ManifestItem[],
   containerWidth: number,
-  targetHeight = 240,
-  gap = 7,
+  targetHeight = 276,
+  gap = 6,
 ): { rows: Row[]; totalHeight: number } {
   const rows: Row[] = [];
   let run: ManifestItem[] = [];

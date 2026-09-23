@@ -4,7 +4,7 @@ import { admin } from './admin.js';
 import { assets } from './assets.js';
 import { guest } from './guest.js';
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<{ Bindings: Env }>({ strict: false });
 
 app.get('/', (c) => c.json({ service: 'imagerepo-api', ok: true }));
 

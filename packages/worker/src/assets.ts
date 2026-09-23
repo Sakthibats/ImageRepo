@@ -1,8 +1,9 @@
 import { Hono } from 'hono';
 import type { Env, Viewer } from './types.js';
 import { resolveViewer } from './access.js';
+import { tagReads } from './tags.js';
 
-export const assets = new Hono<{ Bindings: Env; Variables: { viewer: Viewer } }>();
+export const assets = new Hono<{ Bindings: Env; Variables: { viewer: Viewer } }>({ strict: false });
 
 const IMMUTABLE = 'public, max-age=31536000, immutable';
 
@@ -15,6 +16,10 @@ assets.use('*', async (c, next) => {
   c.set('viewer', viewer);
   await next();
 });
+
+// Tags, timeline and search are owner-only reads behind the same viewer
+// check. Registered before the wildcard for the same reason as manifests.
+assets.route('/tags', tagReads);
 
 // Registered BEFORE /:id/:variant: Hono matches in declaration order, and
 // the wildcard would otherwise swallow "manifest" as an id.

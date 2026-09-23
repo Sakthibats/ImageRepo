@@ -3,7 +3,7 @@ import type { AlbumSummary } from '../api.ts';
 
 /** Floating action bar. Appears only when something is selected. */
 export function AdminBar({
-  count, albums, currentAlbum, onClear, onMove, onCopy, onRemove, onDelete, onSetCover,
+  count, albums, currentAlbum, onClear, onMove, onCopy, onRemove, onDelete, onSetCover, onTag,
 }: {
   count: number;
   albums: AlbumSummary[];
@@ -14,6 +14,7 @@ export function AdminBar({
   onRemove: () => void;
   onDelete: () => void;
   onSetCover: () => void;
+  onTag: () => void;
 }) {
   const [target, setTarget] = useState('');
   if (!count) return null;
@@ -21,8 +22,10 @@ export function AdminBar({
   const others = albums.filter((a) => a.id !== currentAlbum);
 
   return (
-    <div className="actionbar slide-up" role="toolbar" aria-label="Selection actions">
+    <div className="actionbar" role="toolbar" aria-label="Selection actions">
       <span className="ab-count">{count} selected</span>
+      <button className="btn small primary" onClick={onTag}>Tag</button>
+      <span className="ab-sep" />
 
       <select className="input slim" value={target} onChange={(e) => setTarget(e.target.value)}>
         <option value="">Choose album…</option>

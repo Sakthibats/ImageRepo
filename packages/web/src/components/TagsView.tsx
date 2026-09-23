@@ -1,0 +1,110 @@
+import { useEffect, useState } from 'react';
+import type { ManifestItem } from '@imagerepo/shared';
+import { assetUrl } from '../api.ts';
+import { tagsApi, type Item, type Tag } from '../tags.ts';
+import { PhotoGrid } from './PhotoGrid.tsx';
+import { TagChip } from './TagChip.tsx';
+
+/** Browse and search by tag. Selecting several narrows (AND) by default. */
+export function TagsView({
+  onOpen, selection, onToggle, onItems,
+}: {
+  onOpen: (items: Item[], index: number) => void;
+  selection: Set<string>;
+  onToggle: (id: string, index: number, shiftKey: boolean) => void;
+  onItems: (items: Item[]) => void;
+}) {
+  const [tags, setTags] = useState<Tag[] | null>(null);
+  const [active, setActive] = useState<string[]>([]);
+  const [mode, setMode] = useState<'all' | 'any'>('all');
+  const [results, setResults] = useState<Item[] | null>(null);
+  const [filter, setFilter] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void tagsApi.list().then((d) => setTags(d.tags)).catch((e) => setError(e.message));
+  }, []);
+
+  useEffect(() => {
+    if (!active.length) { setResults(null); onItems([]); return; }
+    let live = true;
+    void tagsApi.search(active, mode)
+      .then((d) => { if (live) { setResults(d.items); onItems(d.items); } })
+      .catch((e) => setError(e.message));
+    return () => { live = false; };
+  }, [active, mode, onItems]);
+
+  const toggleTag = (id: string) =>
+    setActive((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+
+  if (error) return <p className="err center">{error}</p>;
+  if (!tags) return <p className="muted center">Loading…</p>;
+
+  if (!tags.length) {
+    return (
+      <div className="empty fade-in">
+        <div className="empty-art">🏷️</div>
+        <h2>No tags yet</h2>
+        <p className="muted">Select photos anywhere, then use Tag on the toolbar.</p>
+      </div>
+    );
+  }
+
+  const shown = filter.trim()
+    ? tags.filter((t) => t.name.toLowerCase().includes(filter.trim().toLowerCase()))
+    : tags;
+
+  return (
+    <>
+      <div className="tag-bar">
+        <input className="input" value={filter} placeholder="Filter tags…"
+               onChange={(e) => setFilter(e.target.value)} />
+        {active.length > 1 && (
+          <div className="seg">
+            <button className={mode === 'all' ? 'on' : ''} onClick={() => setMode('all')}>All of</button>
+            <button className={mode === 'any' ? 'on' : ''} onClick={() => setMode('any')}>Any of</button>
+          </div>
+        )}
+        {active.length > 0 && (
+          <button className="btn small" onClick={() => setActive([])}>Clear</button>
+        )}
+      </div>
+
+      <div className="chip-row tag-cloud">
+        {shown.map((t) => (
+          <TagChip key={t.id} id={t.id} name={t.name} count={t.n}
+                   active={active.includes(t.id)} onClick={() => toggleTag(t.id)} />
+        ))}
+      </div>
+
+      {!active.length ? (
+        <p className="muted center small">Pick a tag to see its photos.</p>
+      ) : !results ? (
+        <p className="muted center">Searching…</p>
+      ) : !results.length ? (
+        <div className="empty fade-in">
+          <div className="empty-art">🔍</div>
+          <h2>No matches</h2>
+          <p className="muted">
+            {mode === 'all' && active.length > 1
+              ? 'Nothing carries all of those tags — try “Any of”.'
+              : 'Nothing carries that tag yet.'}
+          </p>
+        </div>
+      ) : (
+        <>
+          <p className="muted small res-count">
+            {results.length} {results.length === 1 ? 'item' : 'items'}
+          </p>
+          <PhotoGrid
+            items={results as unknown as ManifestItem[]}
+            onOpen={(i) => onOpen(results, i)}
+            urlFor={(it, v) => assetUrl(it.id, v)}
+            selection={selection}
+            onToggle={onToggle}
+          />
+        </>
+      )}
+    </>
+  );
+}

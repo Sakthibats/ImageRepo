@@ -8,7 +8,13 @@ import { ShareView } from './components/ShareView.tsx';
 import { AdminBar, Confirm } from './components/AdminBar.tsx';
 import { ShareManager } from './components/ShareManager.tsx';
 import { Uploader } from './components/Uploader.tsx';
+import { TimelineView } from './components/TimelineView.tsx';
+import { TagsView } from './components/TagsView.tsx';
+import { TagDialog } from './components/TagDialog.tsx';
 import { shareTokenFromPath } from './share.ts';
+import type { Item } from './tags.ts';
+
+type Tab = 'photos' | 'albums' | 'tags';
 
 export default function App() {
   // A /s/<token> URL is the guest experience; everything else is the owner app.
@@ -32,6 +38,12 @@ type Dialog =
   | { kind: 'confirmDeleteAlbum'; album: AlbumSummary };
 
 function OwnerApp() {
+  // Dates are the default way in; albums and tags are alternative lenses on
+  // the same library rather than separate places things live.
+  const [tab, setTab] = useState<Tab>('photos');
+  const [viewItems, setViewItems] = useState<Item[]>([]);
+  const [globalLb, setGlobalLb] = useState<{ items: Item[]; index: number } | null>(null);
+  const [tagOpen, setTagOpen] = useState(false);
   const [albums, setAlbums] = useState<AlbumSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<AlbumSummary | null>(null);
@@ -77,18 +89,22 @@ function OwnerApp() {
     setSelection(new Set());
   }, [open, reloadAlbum]);
 
-  const toggle = useCallback((id: string, index: number, shiftKey: boolean) => {
-    setSelection((prev) => {
-      const next = new Set(prev);
-      if (shiftKey && lastClicked !== null && items) {
-        const [a, b] = [lastClicked, index].sort((x, y) => x - y);
-        for (let i = a; i <= b; i++) next.add(items[i].id);
-      } else if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-    setLastClicked(index);
-  }, [lastClicked, items]);
+  const toggleIn = useCallback((list: { id: string }[]) =>
+    (id: string, index: number, shiftKey: boolean) => {
+      setSelection((prev) => {
+        const next = new Set(prev);
+        if (shiftKey && lastClicked !== null && list.length) {
+          const [a, b] = [lastClicked, index].sort((x, y) => x - y);
+          for (let i = a; i <= b && i < list.length; i++) next.add(list[i].id);
+        } else if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+      setLastClicked(index);
+    }, [lastClicked]);
+
+  const toggle = useCallback((id: string, index: number, shiftKey: boolean) =>
+    toggleIn(items ?? [])(id, index, shiftKey), [toggleIn, items]);
 
   const selectedIds = useMemo(() => [...selection], [selection]);
 
@@ -108,60 +124,113 @@ function OwnerApp() {
   }
   if (!albums) return <main className="center"><p className="muted">Loading…</p></main>;
 
-  // ------------------------------------------------------------ album list
+  const tabs = (
+    <nav className="tabs" role="tablist">
+      {(['photos', 'albums', 'tags'] as Tab[]).map((t) => (
+        <button key={t} role="tab" aria-selected={tab === t}
+                className={`tab ${tab === t ? 'on' : ''}`}
+                onClick={() => { setTab(t); setSelection(new Set()); window.scrollTo(0, 0); }}>
+          {t === 'photos' ? 'Photos' : t === 'albums' ? 'Albums' : 'Tags'}
+        </button>
+      ))}
+    </nav>
+  );
+
+  // ------------------------------------------------------- top-level shell
   if (!open) {
     return (
       <main>
         <header className="head">
           <h1>Photos</h1>
-          <span className="muted">
-            {albums.length === 1 ? '1 album' : `${albums.length} albums`}
-            {' · '}
-            {albums.reduce((n, a) => n + a.n, 0).toLocaleString()} photos & videos
-          </span>
-          <button className="btn primary small push"
-                  onClick={() => { setText(''); setDialog({ kind: 'newAlbum' }); }}>
-            New album
-          </button>
+          {tabs}
+          <div className="push row-gap">
+            {tab === 'albums' && (
+              <button className="btn primary small"
+                      onClick={() => { setText(''); setDialog({ kind: 'newAlbum' }); }}>
+                New album
+              </button>
+            )}
+          </div>
         </header>
 
-        {!albums.length && (
-          <div className="empty fade-in">
-            <div className="empty-art">🌿</div>
-            <h2>No albums yet</h2>
-            <p className="muted">Create one, then drop some photos in.</p>
-            <button className="btn primary" onClick={() => { setText(''); setDialog({ kind: 'newAlbum' }); }}>
-              Create your first album
-            </button>
-          </div>
+        {tab === 'photos' && (
+          <TimelineView
+            onOpen={(list, i) => setGlobalLb({ items: list, index: i })}
+            selection={selection}
+            onToggle={toggleIn(viewItems)}
+            onItems={setViewItems}
+          />
         )}
 
-        <div className="albums">
-          {albums.map((a) => (
-            <div key={a.id} className="album fade-in">
-              <button className="album-hit" onClick={() => { setOpen(a); window.scrollTo(0, 0); }}>
-                <div className="album-cover">
-                  {a.cover
-                    ? <img src={assetUrl(a.cover, '320')} alt="" loading="lazy" />
-                    : <div className="album-blank" />}
-                </div>
-                <div className="album-name">{a.title}</div>
-                <div className="muted small">{a.n} items</div>
-              </button>
-              <div className="album-tools">
-                <button className="icon-btn" title="Share"
-                        onClick={() => setDialog({ kind: 'share', album: a })}>↗</button>
-                <button className="icon-btn" title="Rename"
-                        onClick={() => { setText(a.title); setDialog({ kind: 'renameAlbum', album: a }); }}>✎</button>
-                <button className="icon-btn danger" title="Delete album"
-                        onClick={() => setDialog({ kind: 'confirmDeleteAlbum', album: a })}>🗑</button>
-              </div>
-            </div>
-          ))}
-        </div>
+        {tab === 'tags' && (
+          <TagsView
+            onOpen={(list, i) => setGlobalLb({ items: list, index: i })}
+            selection={selection}
+            onToggle={toggleIn(viewItems)}
+            onItems={setViewItems}
+          />
+        )}
 
+        {tab === 'albums' && (
+          <>
+            <p className="muted small res-count">
+              {albums.length === 1 ? '1 album' : `${albums.length} albums`}
+              {' · '}
+              {albums.reduce((n, a) => n + a.n, 0).toLocaleString()} photos & videos
+            </p>
+            {!albums.length && (
+              <div className="empty fade-in">
+                <div className="empty-art">🌿</div>
+                <h2>No albums yet</h2>
+                <p className="muted">Create one, then drop some photos in.</p>
+                <button className="btn primary" onClick={() => { setText(''); setDialog({ kind: 'newAlbum' }); }}>
+                  Create your first album
+                </button>
+              </div>
+            )}
+            <div className="albums">
+              {albums.map((a) => (
+                <div key={a.id} className="album fade-in">
+                  <button className="album-hit" onClick={() => { setOpen(a); window.scrollTo(0, 0); }}>
+                    <div className="album-cover">
+                      {a.cover
+                        ? <img src={assetUrl(a.cover, '320')} alt="" loading="lazy" />
+                        : <div className="album-blank" />}
+                    </div>
+                    <div className="album-name">{a.title}</div>
+                    <div className="muted small">{a.n} items</div>
+                  </button>
+                  <div className="album-tools">
+                    <button className="icon-btn" title="Share"
+                            onClick={() => setDialog({ kind: 'share', album: a })}>↗</button>
+                    <button className="icon-btn" title="Rename"
+                            onClick={() => { setText(a.title); setDialog({ kind: 'renameAlbum', album: a }); }}>✎</button>
+                    <button className="icon-btn danger" title="Delete album"
+                            onClick={() => setDialog({ kind: 'confirmDeleteAlbum', album: a })}>🗑</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {globalLb && (
+          <Lightbox
+            items={globalLb.items as unknown as OwnerManifestItem[]}
+            index={globalLb.index}
+            onClose={() => setGlobalLb(null)}
+            onIndex={(i) => setGlobalLb({ ...globalLb, index: i })}
+            urlFor={(it, v) => assetUrl(it.id, v)}
+          />
+        )}
+
+        <GlobalBar />
+        {tagOpen && (
+          <TagDialog mediaIds={selectedIds} onClose={() => setTagOpen(false)}
+                     onDone={(m) => { notify(m); setSelection(new Set()); }} />
+        )}
         <Dialogs />
-        {toast && <div className="toast slide-up">{toast}</div>}
+        {toast && <div className="toast">{toast}</div>}
       </main>
     );
   }
@@ -225,12 +294,48 @@ function OwnerApp() {
         onSetCover={() => void act(
           () => adminApi.updateAlbum(open.id, { coverId: selectedIds[0] }), 'Cover updated')}
         onDelete={() => setDialog({ kind: 'confirmDeleteMedia', ids: selectedIds })}
+        onTag={() => setTagOpen(true)}
       />
+
+      {tagOpen && (
+        <TagDialog mediaIds={selectedIds} onClose={() => setTagOpen(false)}
+                   onDone={(m) => { notify(m); setSelection(new Set()); }} />
+      )}
 
       <Dialogs />
       {toast && <div className="toast slide-up">{toast}</div>}
     </main>
   );
+
+  /**
+   * Selection toolbar for the timeline and tag views. There is no album
+   * context here, so it offers tagging, adding to an album, and deleting —
+   * but not "remove from album", which would be meaningless.
+   */
+  function GlobalBar() {
+    const [target, setTarget] = useState('');
+    if (!selection.size) return null;
+    return (
+      <div className="actionbar" role="toolbar" aria-label="Selection actions">
+        <span className="ab-count">{selection.size} selected</span>
+        <button className="btn small primary" onClick={() => setTagOpen(true)}>Tag</button>
+        <span className="ab-sep" />
+        <select className="input slim" value={target} onChange={(e) => setTarget(e.target.value)}>
+          <option value="">Add to album…</option>
+          {(albums ?? []).map((a) => <option key={a.id} value={a.id}>{a.title}</option>)}
+        </select>
+        <button className="btn small" disabled={!target} onClick={() => {
+          const to = target; setTarget('');
+          void act(() => adminApi.addToAlbum(to, selectedIds, 'add'),
+                   `Added ${selectedIds.length} to ${albums?.find((a) => a.id === to)?.title}`);
+        }}>Add</button>
+        <span className="ab-sep" />
+        <button className="btn small danger"
+                onClick={() => setDialog({ kind: 'confirmDeleteMedia', ids: selectedIds })}>Delete…</button>
+        <button className="icon-btn" onClick={() => setSelection(new Set())} aria-label="Clear selection">×</button>
+      </div>
+    );
+  }
 
   function Dialogs() {
     if (dialog.kind === 'share') {

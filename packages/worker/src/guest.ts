@@ -13,7 +13,7 @@ import {
  * server itself issued. Guests cannot enumerate: every asset request proves
  * the media id was part of the album this token grants.
  */
-export const guest = new Hono<{ Bindings: Env }>();
+export const guest = new Hono<{ Bindings: Env }>({ strict: false });
 
 const SESSION_TTL = 12 * 3600;
 const COOKIE = 'ir_share';

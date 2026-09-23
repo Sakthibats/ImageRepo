@@ -6,15 +6,17 @@ import { upsertAlbums, ensureAlbumRows, insertMedia, listAlbums } from './db.js'
 import { bakeAlbum, bakeIndex } from './manifest.js';
 import { mutations } from './mutations.js';
 import { upload } from './upload.js';
+import { tagWrites } from './tags.js';
 
 const MAX_RECORDS_PER_CALL = 500;
 
-export const admin = new Hono<{ Bindings: Env }>();
+export const admin = new Hono<{ Bindings: Env }>({ strict: false });
 admin.use('*', requireAdmin());
 
 // Owner-only mutations (albums, media, deletes).
 admin.route('/', mutations);
 admin.route('/upload', upload);
+admin.route('/tags', tagWrites);
 
 admin.get('/health', async (c) => {
   // Prove both bindings actually work, not just that the Worker is up.

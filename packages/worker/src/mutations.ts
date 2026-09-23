@@ -10,7 +10,7 @@ import { bakeAlbum, bakeIndex } from './manifest.js';
  * Every write that changes what an album contains re-bakes that album's
  * manifests, so the static read path never goes stale.
  */
-export const mutations = new Hono<{ Bindings: Env }>();
+export const mutations = new Hono<{ Bindings: Env }>({ strict: false });
 
 const slug = (s: string) =>
   s.normalize('NFKD').replace(/[̀-ͯ]/g, '')

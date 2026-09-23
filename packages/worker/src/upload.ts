@@ -13,7 +13,7 @@ import { bakeAlbum, bakeIndex } from './manifest.js';
  * Workers cap request bodies, so this path is for photos. Video and bulk
  * backfill go through the CLI, which has ffmpeg and no such ceiling.
  */
-export const upload = new Hono<{ Bindings: Env }>();
+export const upload = new Hono<{ Bindings: Env }>({ strict: false });
 
 const MAX_BYTES = 30 * 1024 * 1024;
 const VARIANTS = new Set(['orig', '320', '1024', '2048']);
