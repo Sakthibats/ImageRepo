@@ -56,6 +56,7 @@ const pipelineFlags = (c: Command) => c
   .option('-y, --yes', 'do not ask for confirmation', false)
   .option('--limit <n>', 'stop after N files', int)
   .option('--concurrency <n>', 'files in flight', int, 4)
+  .option('--restore', 'add back items you deleted from the library', false)
   .option('--preserve-original', 'upload byte-exact originals, keeping GPS', false)
   .option('--preview-all-video', 'generate a 720p preview for every video', false)
   .option('--album-depth <n>', 'folder levels that form an album name', int, 1);
@@ -82,7 +83,7 @@ async function runAdd(paths: string[], opts: any, legacyLibrary: boolean) {
   try {
     const addOpts: AddOptions = {
       dryRun: opts.dryRun, yes: opts.yes || legacyLibrary, limit: opts.limit,
-      concurrency: opts.concurrency,
+      concurrency: opts.concurrency, restore: opts.restore,
       preserveOriginal: opts.preserveOriginal, previewAllVideo: opts.previewAllVideo,
     };
     const result = await addFiles(found, addOpts, {

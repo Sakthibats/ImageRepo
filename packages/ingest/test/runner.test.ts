@@ -252,6 +252,37 @@ check('videos are left alone', redo?.counts.unchanged === 1);
 check('records carry the new version', resent.length > 0 &&
   resent.every((r) => r.stages?.find((s) => s.name === 'derivatives')?.version === 2));
 derivatives.version = 1;
+await addFiles(await collect([lib]), { yes: true }, deps);     // settle back at version 1
+
+// -------------------------------------------- deleted in the web app since
+console.log('\nItems deleted from the library\n');
+
+const gone = byName('beach.png');
+for (const k of [...bucket.objects.keys()]) if (k.includes(gone.id)) bucket.objects.delete(k);
+const exifStage = STAGES.photo.find((s) => s.name === 'exif')!;
+exifStage.version++;                       // any reason to re-process
+derivatives.version = 3;                   // ...including a stage that uploads
+const sentBefore = worker.records.length;
+const kept = await addFiles(await collect([lib]), { yes: true }, deps);
+check('a deleted item is not resurrected', kept?.counts.removed === 1 &&
+  !worker.records.slice(sentBefore).some((r) => r.id === gone.id), JSON.stringify(kept?.counts));
+check('...and nothing is re-uploaded for it', ![...bucket.objects.keys()].some((k) => k.includes(gone.id)),
+  [...bucket.objects.keys()].filter((k) => k.includes(gone.id)).join(' '));
+
+const back = await addFiles(await collect([lib]), { yes: true, restore: true }, deps);
+check('--restore brings it back in full', back?.counts.added === 1 &&
+  bucket.objects.has(`orig/${gone.id}.png`) && bucket.objects.has(`drv/${gone.id}/320.avif`) &&
+  worker.records.at(-1)?.id === gone.id, JSON.stringify(back?.counts));
+
+// A whole album deleted in the web app must not come back as an empty one.
+for (const k of [...bucket.objects.keys()]) if (k.includes(byName('loose.jpg').id)) bucket.objects.delete(k);
+worker.albums.delete('holiday-pics');
+exifStage.version++;
+const emptied = await addFiles(await collect([lib]), { yes: true }, deps);
+check('a deleted album is not re-created empty', emptied?.counts.removed === 1 && !worker.albums.has('holiday-pics'),
+  JSON.stringify(emptied?.counts));
+exifStage.version -= 2;
+derivatives.version = 1;
 state.close();
 
 // --------------------------------------------------------- old ledgers
@@ -280,9 +311,12 @@ const st = (p: string) => {
   const f = converted.files([p])[0];
   return fileState(f, convRuns.get(f.hash!));
 };
-check('finished files stay finished', st('/x/done.jpg') === 'recorded' && st('/x/done.mp4') === 'recorded');
-check('uploaded-but-unrecorded stays that way', st('/x/held.jpg') === 'uploaded');
-check('a dry run is no longer mistaken for an upload', st('/x/dry.jpg') === 'pending');
+const has = (hash: string, stage: string) => convRuns.get(hash.repeat(32))?.get(stage)?.state === 'done';
+check('uploads done before stages are kept, not redone',
+  has('a', 'original') && has('a', 'derivatives') && has('b', 'original') && has('b', 'poster') && has('c', 'original'));
+check('...and only wait on the metadata re-read added since', st('/x/done.jpg') === 'pending' &&
+  convRuns.get('a'.repeat(32))?.get('exif')?.version === 1);
+check('a dry run is no longer mistaken for an upload', !has('d', 'original') && st('/x/dry.jpg') === 'pending');
 converted.close();
 
 console.log(`\n${failures === 0 ? 'all checks passed' : failures + ' FAILED'}\n`);

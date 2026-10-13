@@ -14,7 +14,8 @@ export interface PreviewOut { made: boolean }
 /** Stream and container metadata, read without decoding a frame. */
 export const probe: Stage<VideoProbe> = {
   name: 'probe',
-  version: 1,
+  // v2: also keeps the container's tags (`raw`).
+  version: 2,
   run: ({ path }) => probeVideo(path),
 };
 

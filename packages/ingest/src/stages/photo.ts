@@ -13,7 +13,8 @@ export interface DerivativesOut { width: number; height: number; thumbhash: stri
 /** Captures metadata BEFORE anything is stripped — this is what reaches D1. */
 export const exif: Stage<ExifOut> = {
   name: 'exif',
-  version: 1,
+  // v2: also keeps every tag the camera wrote (`raw`), not just the modelled ones.
+  version: 2,
   async run({ path }) {
     return { ...(await readExif(path)), raw: await readRawMeta(path) };
   },

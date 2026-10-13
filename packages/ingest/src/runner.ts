@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import pLimit from 'p-limit';
 import type { MediaRecord } from '@imagerepo/shared';
+import { r2Key } from '@imagerepo/shared';
 import { hashFile } from './hash.js';
 import type { IngestState, FileRow } from './state.js';
 import { STAGES, buildRecord, recordKey, type PipelineOptions, type StageInput } from './stages/index.js';
@@ -22,9 +23,11 @@ export interface Recorder {
  *             e.g. the same photo filed under another album
  *  unchanged  nothing to do
  *  held       uploaded, but the Worker could not be reached to record it
+ *  removed    uploaded once, then deleted from the library (in the web app);
+ *             left alone unless `restore` is set
  *  failed     see `error`
  */
-export type Outcome = 'added' | 'linked' | 'unchanged' | 'held' | 'failed';
+export type Outcome = 'added' | 'linked' | 'unchanged' | 'held' | 'removed' | 'failed';
 
 export interface FileResult {
   path: string; album: string; outcome: Outcome; error?: string;
@@ -45,6 +48,10 @@ export interface RunDeps {
   concurrency?: number;
   /** Send records only; never start processing. Used by `flush`. */
   recordOnly?: boolean;
+  /** Re-upload items that were deleted from the library since this computer added them. */
+  restore?: boolean;
+  /** Called once, with the albums about to receive records, before any are sent. */
+  beforeRecord?: (albums: string[]) => Promise<void>;
   onProgress?: (p: Progress) => void;
 }
 
@@ -97,6 +104,35 @@ export async function runFiles(files: FileRow[], deps: RunDeps): Promise<RunResu
 
   /** Two paths with identical bytes share one run of the stages. */
   const inflight = new Map<string, Promise<Record<string, unknown>>>();
+
+  /**
+   * The ledger remembers an upload forever, but the library does not have to:
+   * deleting an item in the web app removes its objects. Before doing anything
+   * more for bytes uploaded in an earlier run, confirm they are still there —
+   * otherwise a record would resurrect a photo the owner deleted, pointing at
+   * files that no longer exist. Asked once per content hash.
+   */
+  const deletedChecks = new Map<string, Promise<boolean>>();
+  function deletedSince(hash: string): Promise<boolean> {
+    let check = deletedChecks.get(hash);
+    if (!check) {
+      check = (async () => {
+        const original = runs.get(hash)?.get('original');
+        const ext = (original?.data as { ext?: string } | null)?.ext;
+        if (dry || !storage || original?.state !== 'done' || !ext) return false;
+        if (await storage.exists(r2Key.original(hash, ext))) return false;
+        if (deps.restore) {
+          // Forget the old results so every stage runs, and uploads, again.
+          state.clearRuns(hash);
+          runs.delete(hash);
+          return false;
+        }
+        return true;
+      })();
+      deletedChecks.set(hash, check);
+    }
+    return check;
+  }
 
   async function content(row: FileRow, hash: string): Promise<{ data: Record<string, unknown>; ran: boolean }> {
     const shared = inflight.get(hash);
@@ -152,12 +188,17 @@ export async function runFiles(files: FileRow[], deps: RunDeps): Promise<RunResu
         hash = await hashFile(row.path);
         state.setHash(row.path, hash);
       }
-      const { data, ran } = await content(row, hash);
       const key = recordKey(row.kind, row.album);
-
-      if (!ran && row.recordedKey === key) {
+      const upToDate = row.recordedKey === key && STAGES[row.kind].every((s) => {
+        const run = runs.get(hash)?.get(s.name);
+        return run?.state === 'done' && run.version === s.version;
+      });
+      if (upToDate) {
         results.push({ path: row.path, album: row.album, outcome: 'unchanged' });
+      } else if (await deletedSince(hash)) {
+        results.push({ path: row.path, album: row.album, outcome: 'removed' });
       } else {
+        const { data, ran } = await content(row, hash);
         toRecord.push({
           row, key, outcome: ran ? 'added' : 'linked',
           record: buildRecord({ ...row, hash }, data),
@@ -177,11 +218,21 @@ export async function runFiles(files: FileRow[], deps: RunDeps): Promise<RunResu
     deps.onProgress?.({ done, total: files.length, failed, uploadedBytes, current: row.path });
   })));
 
+  // Only albums that are actually getting something are touched — an album
+  // whose every item turned out to be deleted must not be re-created empty.
+  let unprepared: string | undefined;
+  if (!dry && recorder?.configured && toRecord.length && deps.beforeRecord) {
+    try { await deps.beforeRecord([...new Set(toRecord.map((t) => t.row.album))]); }
+    catch (e) { unprepared = String((e as Error)?.message ?? e).split('\n')[0].slice(0, 300); }
+  }
+
   // Records go last and in batches: 13,000 photos are a few dozen requests.
   for (let i = 0; i < toRecord.length; i += RECORD_BATCH) {
     const chunk = toRecord.slice(i, i + RECORD_BATCH);
-    let held: string | undefined;
-    if (dry) {
+    let held = unprepared;
+    if (held) {
+      // The albums could not be prepared; keep the uploads and try later.
+    } else if (dry) {
       // Report what would happen; send and remember nothing.
     } else if (!recorder?.configured) {
       held = 'Worker not configured';
@@ -206,7 +257,7 @@ export async function runFiles(files: FileRow[], deps: RunDeps): Promise<RunResu
     }
   }
 
-  const counts: Record<Outcome, number> = { added: 0, linked: 0, unchanged: 0, held: 0, failed: 0 };
+  const counts: Record<Outcome, number> = { added: 0, linked: 0, unchanged: 0, held: 0, removed: 0, failed: 0 };
   for (const r of results) counts[r.outcome]++;
   return { files: results, uploadedBytes, counts };
 }

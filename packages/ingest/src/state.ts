@@ -171,6 +171,10 @@ export class IngestState {
     `).run(hash, stage, version, error.slice(0, 500));
   }
 
+  clearRuns(hash: string) {
+    this.db.prepare(`DELETE FROM stage_runs WHERE hash=?`).run(hash);
+  }
+
   // ------------------------------------------------------------ pre-stages
 
   /** 0 = written before stages existed and not yet converted. */

@@ -116,7 +116,9 @@ a summary. When it finishes the photos are visible in the web app.
 
 The CLI reads `.env.ingest` and keeps its ledger in `.ingest/state.db`, both at
 the repo root, whichever folder you run it from. The ledger only knows what this
-computer uploaded: a photo deleted in the web app still counts as added here.
+computer uploaded. If you delete a photo in the web app, the CLI notices the next
+time it has anything to do for that file and leaves it deleted; `add --restore`
+brings such items back.
 
 ### How processing is organised
 

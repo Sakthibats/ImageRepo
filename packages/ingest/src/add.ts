@@ -89,6 +89,8 @@ export function resolveAlbum(name: string, existing: { id: string; title: string
 export interface AddOptions extends PipelineOptions {
   /** Skip the confirmation prompt. */
   yes?: boolean;
+  /** Re-upload items deleted from the library since this computer added them. */
+  restore?: boolean;
   concurrency?: number;
   limit?: number;
 }
@@ -135,7 +137,7 @@ export async function addFiles(
   }
   if (!found.files.length) {
     out('\n  no photos or videos found\n');
-    return { files: [], uploadedBytes: 0, counts: { added: 0, linked: 0, unchanged: 0, held: 0, failed: 0 } };
+    return { files: [], uploadedBytes: 0, counts: { added: 0, linked: 0, unchanged: 0, held: 0, removed: 0, failed: 0 } };
   }
 
   for (const f of found.files) state.upsert(f);
@@ -193,15 +195,19 @@ export async function addFiles(
   out('');
 
   // -------------------------------------------------------------------- run
-  if (!dry && api?.configured && todo.length) {
-    // Albums first, so no record ever references one that does not exist.
-    await api.ensureAlbums([...albums].map(([id, a]) => ({ id, title: a.title, seededFrom: a.title })));
-  }
 
   const started = Date.now();
   const progress = deps.progress ?? ttyProgress;
   const result = await runFiles(rows, {
     state, storage: deps.storage, recorder: api, opts, concurrency: opts.concurrency,
+    restore: opts.restore,
+    // Albums first, so no record ever references one that does not exist.
+    beforeRecord: async (ids) => {
+      await api?.ensureAlbums(ids.map((id) => {
+        const title = albums.get(id)?.title ?? id;
+        return { id, title, seededFrom: title };
+      }));
+    },
     onProgress: (p) => {
       const rate = p.done / Math.max((Date.now() - started) / 1000, 0.001);
       const eta = (p.total - p.done) / Math.max(rate, 0.01);
@@ -233,6 +239,7 @@ export async function addFiles(
   line(c.linked, dry ? 'already uploaded — would be filed in the album' : 'already uploaded — filed in the album');
   line(c.unchanged, 'already in your library');
   line(c.held, 'uploaded but not yet recorded');
+  line(c.removed, 'deleted from your library since — left alone (add --restore brings them back)');
   line(c.failed, 'failed');
 
   if (c.held) {
