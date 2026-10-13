@@ -106,6 +106,7 @@ a summary. When it finishes the photos are visible in the web app.
 | `retry` | Try again: everything that failed or was left unfinished. |
 | `failures` | List files that could not be added, and why. |
 | `status` | Show what this computer has added. |
+| `stages` | Show how far each processing stage has got across the whole library. |
 | `process <root>` | `add` for a whole library, without asking. Loose files go to `unsorted`. |
 | `flush` | Record uploads the database has not heard about (after a Worker outage). |
 | `scan <root>` | Walk a folder and list albums and sizes. Touches nothing. |
@@ -136,9 +137,15 @@ version.
 That is what makes the pipeline extensible. To add a step, write a stage and add
 it to the list in `stages/index.ts`; every item already in the library then lacks
 it, and re-running `add` on those folders does only the new step. To redo a step
-for everything, bump its version. The Worker exposes the same view for other
-runners: `GET /admin/stages/pending?stage=<name>&version=<n>` lists the items
-still waiting on a stage, and `POST /admin/stages/report` records results.
+for everything, bump its version. The Worker exposes the same view to any other runner, under `/admin/stages`:
+
+| Route | Purpose |
+|---|---|
+| `GET /pending?stage=&version=` | List items still waiting on a stage. |
+| `POST /claim` | Take a batch under a lease. Two runners never get the same item, and a crashed runner's lease simply lapses. |
+| `POST /report` | Record each item as done or failed. |
+| `GET /failed?stage=` | List failures. After five attempts an item is no longer handed out until the stage version changes. |
+| `GET /summary` | Counts per stage, version and state. |
 
 ## The web app
 

@@ -49,6 +49,24 @@ export interface RunDeps {
 }
 
 const RECORD_BATCH = 200;
+/**
+ * A record is several database statements, and Workers cap how many one
+ * request may run (far lower on the free plan). If a full batch is refused,
+ * it is re-sent in pieces this small before giving up.
+ */
+const RECORD_BATCH_SMALL = 8;
+
+async function sendRecords(recorder: Recorder, records: MediaRecord[]): Promise<void> {
+  try {
+    await recorder.recordMedia(records);
+  } catch (e) {
+    if (records.length <= RECORD_BATCH_SMALL) throw e;
+    // Re-sending a record is harmless, so a batch that half-landed is fine.
+    for (let i = 0; i < records.length; i += RECORD_BATCH_SMALL) {
+      await recorder.recordMedia(records.slice(i, i + RECORD_BATCH_SMALL));
+    }
+  }
+}
 
 class StageError extends Error {
   constructor(stage: string, cause: unknown) {
@@ -169,7 +187,7 @@ export async function runFiles(files: FileRow[], deps: RunDeps): Promise<RunResu
       held = 'Worker not configured';
     } else {
       try {
-        await recorder.recordMedia(chunk.map((c) => c.record));
+        await sendRecords(recorder, chunk.map((c) => c.record));
       } catch (e) {
         held = String((e as Error)?.message ?? e).split('\n')[0].slice(0, 300);
       }

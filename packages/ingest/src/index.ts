@@ -335,6 +335,33 @@ program
     state.close();
   });
 
+// --------------------------------------------------------------- stages
+program
+  .command('stages')
+  .description('Show how far each processing stage has got, across the whole library.')
+  .action(async () => {
+    const api = new AdminApi(loadConfig());
+    const { media, stages } = await api.stageSummary();
+    const total = Object.fromEntries(media.map((m) => [m.kind, m.n]));
+    console.log(`\n  library: ${total.photo ?? 0} photos, ${total.video ?? 0} videos\n`);
+
+    for (const kind of ['photo', 'video'] as const) {
+      for (const s of STAGES[kind]) {
+        const at = (state: string) => stages
+          .filter((r) => r.stage === s.name && r.state === state && (state !== 'done' || r.version >= s.version))
+          .reduce((n, r) => n + r.n, 0);
+        // 'original' is shared by both kinds, so its count is out of the whole library.
+        const shared = STAGES.photo.some((x) => x.name === s.name) && STAGES.video.some((x) => x.name === s.name);
+        if (shared && kind === 'video') continue;
+        const of = shared ? (total.photo ?? 0) + (total.video ?? 0) : total[kind] ?? 0;
+        const failed = at('failed');
+        console.log(`    ${`${s.name}@${s.version}`.padEnd(16)} ${String(at('done')).padStart(6)} / ${of} done` +
+          (failed ? `   ${failed} failed` : ''));
+      }
+    }
+    console.log(`\n  Items added before stages existed are not counted until they are re-processed.\n`);
+  });
+
 // --------------------------------------------------------------- doctor
 program
   .command('doctor')

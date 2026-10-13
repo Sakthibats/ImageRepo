@@ -106,7 +106,7 @@ export async function insertMedia(db: D1Database, records: MediaRecord[]): Promi
         INSERT INTO media_stages (media_id, stage, version, state, attempts, error, runner, updated_at)
         VALUES ${rows.join(', ')}
         ON CONFLICT(media_id, stage) DO UPDATE SET
-          version = excluded.version, state = 'done', error = NULL,
+          version = excluded.version, state = 'done', error = NULL, lease_until = NULL,
           runner = excluded.runner, updated_at = excluded.updated_at
       `).bind(r.id, now, ...stages.flatMap((s) => [s.name, s.version])));
     }

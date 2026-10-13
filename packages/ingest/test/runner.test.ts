@@ -211,6 +211,23 @@ check('recording later needs no re-upload', flushed.counts.linked === 1 && bucke
   states(offline).recorded === 1, JSON.stringify(flushed.counts));
 offline.close();
 
+// A Worker that refuses big batches (as a low statement cap would) still gets everything.
+const picky = new FakeWorker();
+picky.recordMedia = async function (records: MediaRecord[]) {
+  if (records.length > 8) throw new Error('500 too many statements');
+  this.calls++; this.records.push(...records);
+};
+const many = openLedger(join(root, 'ledger4', 'state.db'));
+const manyDir = join(root, 'Many');
+mkdirSync(manyDir);
+for (let i = 0; i < 20; i++) {
+  await sharp({ create: { width: 40 + i, height: 30, channels: 3, background: '#456' } }).jpeg().toFile(join(manyDir, `p${i}.jpg`));
+}
+const split = await addFiles(await collect([manyDir]), { yes: true }, { ...deps, state: many, storage: new FakeBucket(), api: picky });
+check('a refused batch is re-sent in smaller pieces', split?.counts.added === 20 && picky.records.length === 20 && picky.calls === 3,
+  `${picky.calls} requests`);
+many.close();
+
 // ----------------------------------------------------------- confirmation
 const bucket3 = new FakeBucket();
 const fresh = openLedger(join(root, 'ledger3', 'state.db'));

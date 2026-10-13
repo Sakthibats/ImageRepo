@@ -6,10 +6,13 @@ CREATE TABLE IF NOT EXISTS media_stages (
   media_id    TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE,
   stage       TEXT NOT NULL,
   version     INTEGER NOT NULL,
-  state       TEXT NOT NULL CHECK (state IN ('done','failed')),
+  -- 'claimed' = a runner has taken it and holds it until lease_until. If the
+  -- runner dies, the lease lapses and the item is simply claimable again.
+  state       TEXT NOT NULL CHECK (state IN ('done','failed','claimed')),
   attempts    INTEGER NOT NULL DEFAULT 1,
   error       TEXT,
   runner      TEXT,                      -- who did it, e.g. "cli"
+  lease_until INTEGER,                   -- epoch seconds; only meaningful while claimed
   updated_at  INTEGER NOT NULL,
   PRIMARY KEY (media_id, stage)
 );

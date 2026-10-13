@@ -82,6 +82,19 @@ export class AdminApi {
     return res.json() as Promise<{ albums: any[] }>;
   }
 
+  /** How far each processing stage has got across the whole library. */
+  async stageSummary() {
+    const res = await fetch(`${this.cfg.apiUrl}/admin/stages/summary`, {
+      headers: this.headers(), redirect: 'manual',
+    });
+    if (res.status === 404) throw new Error('this Worker is older than the CLI — deploy it to see stage progress');
+    if (!res.ok) throw new Error(`/admin/stages/summary -> ${res.status}`);
+    return res.json() as Promise<{
+      media: { kind: string; n: number }[];
+      stages: { stage: string; version: number; state: string; n: number }[];
+    }>;
+  }
+
   bake(album?: string) {
     return this.post('/admin/bake', album ? { album } : {});
   }

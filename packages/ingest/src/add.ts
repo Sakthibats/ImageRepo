@@ -170,6 +170,12 @@ export async function addFiles(
   out(`\n    ${todo.length.toLocaleString()} to add` + (upToDate ? ` · ${upToDate.toLocaleString()} already in your library` : ''));
 
   if (!todo.length) { out('\n  everything here is already in your library\n'); }
+  else if (!dry) {
+    // Upload time dominates and depends on the connection, which we cannot
+    // know in advance; a live estimate replaces this once the run starts.
+    const seconds = todo.reduce((n, r) => n + r.size, 0) / (20 * 1024 * 1024 / 8);
+    out(`    upload: roughly ${fmtDur(seconds * 1000)} on a 20 Mbps connection, ${fmtDur(seconds * 200)} on 100 Mbps`);
+  }
 
   if (opts.limit && todo.length > opts.limit) {
     rows = todo.slice(0, opts.limit);

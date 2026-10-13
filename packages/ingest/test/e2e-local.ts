@@ -90,6 +90,38 @@ const report = await fetch(apiUrl + '/admin/stages/report', {
 });
 check('a runner can report a stage', report.ok && (await get('/admin/stages/pending?stage=tag&version=1')).items.length === before + 2);
 
+// ------------------------------------------------- claiming work (leases)
+const post = async (path: string, body: unknown) => (await fetch(apiUrl + path, {
+  method: 'POST',
+  headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
+  body: JSON.stringify(body),
+})).json() as Promise<any>;
+
+const backlog = (await get('/admin/stages/pending?stage=faces&version=1')).items.length;
+const one = await post('/admin/stages/claim', { stage: 'faces', version: 1, limit: 2, runner: 'a', leaseSeconds: 60 });
+const two = await post('/admin/stages/claim', { stage: 'faces', version: 1, limit: 500, runner: 'b', leaseSeconds: 60 });
+const idsA = one.items.map((i: any) => i.id), idsB = two.items.map((i: any) => i.id);
+check('a claim hands out a batch', idsA.length === 2);
+check('a second runner gets the rest, never the same items',
+  idsB.length === backlog - 2 && !idsB.some((id: string) => idsA.includes(id)), `${idsB.length} of ${backlog}`);
+check('claimed items leave the backlog', (await get('/admin/stages/pending?stage=faces&version=1')).items.length === 0);
+
+const shortLease = await post('/admin/stages/claim', { stage: 'ocr', version: 1, limit: 1, runner: 'crashy', leaseSeconds: 1 });
+await new Promise((r) => setTimeout(r, 2100));
+const reclaimed = await post('/admin/stages/claim', { stage: 'ocr', version: 1, limit: 1, runner: 'next' });
+check('a lapsed lease is claimable again', reclaimed.items[0]?.id === shortLease.items[0]?.id);
+
+const victim = idsA[0];
+for (let i = 0; i < 5; i++) {
+  await post('/admin/stages/report', { runner: 'a', items: [{ mediaId: victim, stage: 'faces', version: 1, state: 'failed', error: 'model refused' }] });
+}
+const dead = (await get('/admin/stages/failed?stage=faces')).items.find((i: any) => i.media_id === victim);
+check('five failures park an item as a dead letter', dead?.gave_up === 1 && dead?.attempts === 5, JSON.stringify(dead));
+const afterDead = await post('/admin/stages/claim', { stage: 'faces', version: 1, limit: 500, runner: 'c' });
+check('...and it is not handed out again', !afterDead.items.some((i: any) => i.id === victim));
+const v2 = await post('/admin/stages/claim', { stage: 'faces', version: 2, limit: 500, runner: 'c' });
+check('...until the stage version is bumped', v2.items.some((i: any) => i.id === victim));
+
 const again = await addFiles(await collect([lib]), { yes: true }, deps);
 check('second run is a no-op', again?.counts.unchanged === 3 && (await get('/admin/health')).media === before + 3);
 
