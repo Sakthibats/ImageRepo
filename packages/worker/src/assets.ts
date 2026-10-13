@@ -28,7 +28,11 @@ assets.get('/manifest/index', async (c) => {
   const obj = await c.env.BUCKET.get('man/index.owner.current.json');
   if (!obj) return c.json({ error: 'not baked yet' }, 404);
   return new Response(obj.body, {
-    headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=60' },
+    // The index is the mutable pointer to everything else, and the app
+    // re-reads it straight after each edit. Any freshness lifetime here makes
+    // the browser answer that re-read from its cache, so a rename or a new
+    // album appears not to have happened.
+    headers: { 'content-type': 'application/json', 'cache-control': 'private, no-cache' },
   });
 });
 

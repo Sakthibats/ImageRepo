@@ -229,7 +229,7 @@ function OwnerApp() {
           <TagDialog mediaIds={selectedIds} onClose={() => setTagOpen(false)}
                      onDone={(m) => { notify(m); setSelection(new Set()); }} />
         )}
-        <Dialogs />
+        {Dialogs()}
         {toast && <div className="toast">{toast}</div>}
       </main>
     );
@@ -302,7 +302,7 @@ function OwnerApp() {
                    onDone={(m) => { notify(m); setSelection(new Set()); }} />
       )}
 
-      <Dialogs />
+      {Dialogs()}
       {toast && <div className="toast slide-up">{toast}</div>}
     </main>
   );
@@ -337,6 +337,10 @@ function OwnerApp() {
     );
   }
 
+  // Called as a function, not rendered as <Dialogs />: a component declared
+  // in here has a new identity on every render, so React would remount the
+  // dialog on each keystroke — replaying its animation and throwing the caret
+  // to the end of the name being edited.
   function Dialogs() {
     if (dialog.kind === 'share') {
       return <ShareManager albumId={dialog.album.id} albumTitle={dialog.album.title}

@@ -66,6 +66,18 @@ mutations.patch('/albums/:id', async (c) => {
   const album = await c.env.DB.prepare('SELECT id FROM albums WHERE id = ?1').bind(id).first();
   if (!album) return c.json({ error: 'no such album' }, 404);
 
+  const title = b.title?.trim() || null;
+  if (title) {
+    // Same rule as creation: two albums with one visible name are
+    // indistinguishable in the UI.
+    const clash = await c.env.DB.prepare(
+      'SELECT title FROM albums WHERE LOWER(title) = LOWER(?1) AND id <> ?2 LIMIT 1'
+    ).bind(title, id).first<{ title: string }>();
+    if (clash) {
+      return c.json({ error: `an album named "${clash.title}" already exists` }, 409);
+    }
+  }
+
   if (b.coverId) {
     // A cover must actually be in the album, or the album list shows a photo
     // that is not there.
@@ -82,7 +94,7 @@ mutations.patch('/albums/:id', async (c) => {
       cover_id    = COALESCE(?4, cover_id),
       updated_at  = ?5
     WHERE id = ?1
-  `).bind(id, b.title?.trim() || null, b.description ?? null, b.coverId ?? null, now()).run();
+  `).bind(id, title, b.description ?? null, b.coverId ?? null, now()).run();
 
   await rebake(c.env, [id]);
   return c.json({ ok: true });
