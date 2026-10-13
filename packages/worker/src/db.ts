@@ -7,6 +7,9 @@ import type { MediaRecord } from '@imagerepo/shared';
  */
 const MEDIA_COLS = 24;
 
+/** A camera's metadata is a few KB; anything far beyond that is a malformed file. */
+const MAX_RAW_META = 32 * 1024;
+
 export async function upsertAlbums(
   db: D1Database,
   albums: { id: string; title: string; seededFrom?: string }[],
@@ -53,15 +56,16 @@ export async function insertMedia(db: D1Database, records: MediaRecord[]): Promi
     INSERT INTO media (
       id, kind, ext, bytes, width, height, duration_ms,
       taken_at, uploaded_at, camera, lens, iso, fstop, focal_mm,
-      lat, lon, place, thumbhash, caption, orig_name, source_path
-    ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)
+      lat, lon, place, thumbhash, caption, orig_name, source_path, raw_meta
+    ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)
     ON CONFLICT(id) DO UPDATE SET
       -- Content-addressed: same id means same bytes. Refresh derived metadata
       -- but preserve anything the user has edited (caption, place).
       width     = excluded.width,
       height    = excluded.height,
       taken_at  = COALESCE(media.taken_at, excluded.taken_at),
-      thumbhash = excluded.thumbhash
+      thumbhash = excluded.thumbhash,
+      raw_meta  = COALESCE(excluded.raw_meta, media.raw_meta)
   `);
 
   const link = db.prepare(`
@@ -86,12 +90,26 @@ export async function insertMedia(db: D1Database, records: MediaRecord[]): Promi
       r.camera ?? null, r.lens ?? null, r.iso ?? null, r.fstop ?? null, r.focalMm ?? null,
       r.lat ?? null, r.lon ?? null, r.place ?? null,
       r.thumbhash ?? null, r.caption ?? null, r.origName, r.sourcePath ?? null,
+      r.rawMeta ? JSON.stringify(r.rawMeta).slice(0, MAX_RAW_META) : null,
     ));
     // taken_at ordering gives a sensible default position within the album.
     for (const albumId of r.albums) {
       statements.push(link.bind(albumId, r.id, r.takenAt ?? 0));
     }
     statements.push(logStmt.bind(r.id, JSON.stringify(r.derivatives), now, '0.1.0'));
+
+    // One statement for all of a record's stages, to keep the batch short.
+    const stages = (r.stages ?? []).filter((s) => s?.name && Number.isInteger(s.version)).slice(0, 12);
+    if (stages.length) {
+      const rows = stages.map((_, i) => `(?1, ?${i * 2 + 3}, ?${i * 2 + 4}, 'done', 1, NULL, 'cli', ?2)`);
+      statements.push(db.prepare(`
+        INSERT INTO media_stages (media_id, stage, version, state, attempts, error, runner, updated_at)
+        VALUES ${rows.join(', ')}
+        ON CONFLICT(media_id, stage) DO UPDATE SET
+          version = excluded.version, state = 'done', error = NULL,
+          runner = excluded.runner, updated_at = excluded.updated_at
+      `).bind(r.id, now, ...stages.flatMap((s) => [s.name, s.version])));
+    }
   }
 
   await db.batch(statements);

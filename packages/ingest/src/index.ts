@@ -1,40 +1,202 @@
-#!/usr/bin/env node
 import { Command } from 'commander';
-import pLimit from 'p-limit';
-import { resolve } from 'node:path';
-import { loadConfig } from './config.js';
+import { existsSync } from 'node:fs';
+import { basename } from 'node:path';
+import { loadConfig, type Config } from './config.js';
 import { scanLibrary, summarise } from './scan.js';
-import { IngestState } from './state.js';
+import { openLedger, fileState, failureOf } from './ledger.js';
 import { R2 } from './r2.js';
 import { AdminApi } from './api.js';
-import { processFile } from './pipeline.js';
-import { hashFile } from './hash.js';
-import type { MediaRecord } from '@imagerepo/shared';
+import { addFiles, collect, resolveAlbum, fmtBytes, fmtDur, type AddOptions } from './add.js';
+import { runFiles } from './runner.js';
+import { STAGES } from './stages/index.js';
+import { ENV_PATH, STATE_PATH, userPath } from './paths.js';
 
-const CLI_VERSION = '0.1.0';
-const STATE_PATH = resolve(process.cwd(), '.ingest/state.db');
-
-const fmtBytes = (n: number) => {
-  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
-  return `${n.toFixed(i === 0 ? 0 : 1)}${u[i]}`;
-};
-const fmtDur = (ms: number) => {
-  const s = Math.round(ms / 1000);
-  return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m${s % 60}s` : `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m`;
-};
+const CLI_VERSION = '0.2.0';
+const int = (v: string) => parseInt(v, 10);
 
 const program = new Command();
-program.name('imagerepo').description('Ingest a photo library into R2 + D1').version(CLI_VERSION);
+program.name('imagerepo').description('Add photos and videos to your ImageRepo library').version(CLI_VERSION);
+
+/** Stops with a plain-language reason. */
+function fail(message: string): never {
+  console.error(`\n  ${message}\n`);
+  process.exit(1);
+}
+
+/**
+ * Checks everything an upload needs before any work starts, so the first
+ * problem is reported in the first second rather than after an hour.
+ */
+async function connect(): Promise<{ cfg: Config; r2: R2; api: AdminApi }> {
+  let cfg: Config;
+  try { cfg = loadConfig(); }
+  catch (e: any) { fail(e.message); }
+
+  const r2 = new R2(cfg);
+  const chk = await r2.check();
+  if (!chk.ok) fail(`Can't reach your storage bucket "${cfg.bucket}": ${chk.error}\n  Check the R2 keys in ${ENV_PATH}`);
+
+  const api = new AdminApi(cfg);
+  if (api.configured) {
+    const h = await api.health();
+    if (!h.ok) fail(`Can't reach your library at ${cfg.apiUrl}: ${h.error}\n  Run "imagerepo doctor" for details.`);
+  }
+  return { cfg, r2, api };
+}
+
+async function needTool(bin: string, why: string) {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  try { await promisify(execFile)(bin, ['-version']); }
+  catch { fail(`${bin} is not installed, and ${why}.\n  Install it with: brew install ffmpeg`); }
+}
+
+const pipelineFlags = (c: Command) => c
+  .option('--dry-run', 'show what would happen; upload nothing', false)
+  .option('-y, --yes', 'do not ask for confirmation', false)
+  .option('--limit <n>', 'stop after N files', int)
+  .option('--concurrency <n>', 'files in flight', int, 4)
+  .option('--preserve-original', 'upload byte-exact originals, keeping GPS', false)
+  .option('--preview-all-video', 'generate a 720p preview for every video', false)
+  .option('--album-depth <n>', 'folder levels that form an album name', int, 1);
+
+async function runAdd(paths: string[], opts: any, legacyLibrary: boolean) {
+  const targets = paths.map(userPath);
+  const online = opts.dryRun ? null : await connect();
+
+  let album: { id: string; title: string } | undefined;
+  if (opts.album) {
+    const existing = online?.api.configured ? (await online.api.listAlbums()).albums : [];
+    album = resolveAlbum(opts.album, existing);
+  }
+
+  const found = await collect(targets, {
+    album, albumDepth: opts.albumDepth, looseAsUnsorted: legacyLibrary,
+  });
+  if (found.files.some((f) => f.kind === 'video')) {
+    await needTool('ffmpeg', 'videos need it');
+    await needTool('ffprobe', 'videos need it');
+  }
+
+  const state = openLedger(STATE_PATH);
+  try {
+    const addOpts: AddOptions = {
+      dryRun: opts.dryRun, yes: opts.yes || legacyLibrary, limit: opts.limit,
+      concurrency: opts.concurrency,
+      preserveOriginal: opts.preserveOriginal, previewAllVideo: opts.previewAllVideo,
+    };
+    const result = await addFiles(found, addOpts, {
+      state, storage: online?.r2 ?? null, api: online?.api ?? null,
+      siteUrl: online?.cfg.apiUrl || undefined,
+    });
+    if (result && (result.counts.failed || result.counts.held)) process.exitCode = 1;
+  } finally {
+    state.close();
+  }
+}
+
+// ------------------------------------------------------------------ add
+pipelineFlags(program
+  .command('add')
+  .description('Add photos and videos. Point it at files, folders, or both.')
+  .argument('<paths...>', 'files or folders')
+  .option('-a, --album <name>', 'put everything in this album (created if new)'))
+  .addHelpText('after', `
+Examples:
+  imagerepo add ~/Pictures/Goa                 one album, named "Goa"
+  imagerepo add ~/Pictures                     each subfolder becomes an album
+  imagerepo add IMG_1.jpg IMG_2.jpg -a "Mum"   these files, into the album "Mum"
+  imagerepo add ~/Pictures/Goa --dry-run       see what would happen first
+
+Safe to re-run: anything already in your library is skipped.`)
+  .action((paths: string[], opts) => runAdd(paths, opts, false));
+
+// -------------------------------------------------------------- process
+pipelineFlags(program
+  .command('process')
+  .description('Add a whole library folder without asking. Loose files go to "unsorted".')
+  .argument('<root>', 'library root folder'))
+  .action((root: string, opts) => runAdd([root], opts, true));
+
+// ---------------------------------------------------------------- retry
+program
+  .command('retry')
+  .description('Try again: everything that failed or was left unfinished.')
+  .option('--concurrency <n>', 'files in flight', int, 4)
+  .action(async (opts) => {
+    const state = openLedger(STATE_PATH);
+    const runs = state.runs();
+    const all = state.files().filter((f) => fileState(f, f.hash ? runs.get(f.hash) : undefined) !== 'recorded');
+    const gone = all.filter((f) => !existsSync(f.path));
+    const rows = all.filter((f) => existsSync(f.path));
+    if (gone.length) console.log(`\n  ${gone.length} unfinished file(s) are no longer on disk and were left alone`);
+    if (!rows.length) { console.log('\n  nothing to retry\n'); state.close(); return; }
+
+    const { cfg, r2, api } = await connect();
+    try {
+      // The ledger already knows each file's album, so nothing is re-scanned.
+      const found = { files: rows.map((r) => ({ ...r })), ignored: [], missing: [] };
+      const result = await addFiles(found, { yes: true, concurrency: opts.concurrency }, {
+        state, storage: r2, api, siteUrl: cfg.apiUrl || undefined,
+      });
+      if (result && (result.counts.failed || result.counts.held)) process.exitCode = 1;
+    } finally {
+      state.close();
+    }
+  });
+
+// ------------------------------------------------------------- failures
+program
+  .command('failures')
+  .description('List files that could not be added, and why.')
+  .action(() => {
+    const state = openLedger(STATE_PATH);
+    const runs = state.runs();
+    const failed = state.files().filter((f) => fileState(f, f.hash ? runs.get(f.hash) : undefined) === 'failed');
+    if (!failed.length) { console.log('\n  no failures\n'); state.close(); return; }
+    console.log();
+    for (const f of failed) {
+      console.log(`  ${f.path}`);
+      console.log(`      ${failureOf(f, f.hash ? runs.get(f.hash) : undefined)}`);
+    }
+    console.log(`\n  ${failed.length} failed — "imagerepo retry" tries them again\n`);
+    state.close();
+  });
+
+// ---------------------------------------------------------------- flush
+program
+  .command('flush')
+  .description('Record uploads the database has not heard about yet. Safe to re-run.')
+  .action(async () => {
+    const state = openLedger(STATE_PATH);
+    const api = new AdminApi(loadConfig());
+    if (!api.configured) { state.close(); fail(`ADMIN_API_URL / ADMIN_TOKEN are not set in ${ENV_PATH}`); }
+
+    const runs = state.runs();
+    const held = state.files().filter((f) => fileState(f, f.hash ? runs.get(f.hash) : undefined) === 'uploaded');
+    if (!held.length) { console.log('\n  nothing held — everything is recorded\n'); state.close(); return; }
+
+    const used = new Set(held.map((f) => f.album));
+    await api.ensureAlbums(state.albumTitles()
+      .filter((a) => used.has(a.id))
+      .map((a) => ({ id: a.id, title: a.title, seededFrom: a.title })));
+
+    console.log(`\n  recording ${held.length} file(s)...`);
+    const result = await runFiles(held, { state, storage: null, recorder: api, opts: {}, recordOnly: true });
+    for (const album of used) await api.bake(album);
+    console.log(`  done — ${result.counts.added + result.counts.linked} recorded` +
+      (result.counts.held ? `, ${result.counts.held} still held` : '') + '\n');
+    state.close();
+  });
 
 // ----------------------------------------------------------------- scan
 program
   .command('scan')
-  .description('Walk the library and show what would be ingested. Touches nothing.')
+  .description('Walk a folder and show what is in it. Touches nothing.')
   .argument('<root>', 'library root folder')
-  .option('--album-depth <n>', 'folder levels that form an album name', (v) => parseInt(v, 10), 1)
+  .option('--album-depth <n>', 'folder levels that form an album name', int, 1)
   .action(async (root: string, opts) => {
-    const files = await scanLibrary(resolve(root), opts.albumDepth);
+    const files = await scanLibrary(userPath(root), opts.albumDepth);
     const albums = summarise(files);
     const bytes = files.reduce((a, f) => a + f.size, 0);
 
@@ -48,149 +210,6 @@ program
     }
     const est = bytes / (20 * 1024 * 1024 / 8);
     console.log(`\n  upload estimate: ${fmtDur(est * 1000)} at 20Mbps, ${fmtDur(est * 1000 / 5)} at 100Mbps\n`);
-  });
-
-// -------------------------------------------------------------- process
-program
-  .command('process')
-  .description('Hash, derive, strip metadata, upload, and record.')
-  .argument('<root>', 'library root folder')
-  .option('--dry-run', 'process locally, upload nothing', false)
-  .option('--limit <n>', 'stop after N files (use this for your first run)', (v) => parseInt(v, 10))
-  .option('--concurrency <n>', 'files in flight', (v) => parseInt(v, 10), 4)
-  .option('--preserve-original', 'upload byte-exact originals, keeping GPS', false)
-  .option('--preview-all-video', 'generate a 720p preview for every video', false)
-  .option('--album-depth <n>', 'folder levels that form an album name', (v) => parseInt(v, 10), 1)
-  .action(async (root: string, opts) => {
-    const state = new IngestState(STATE_PATH);
-    const files = await scanLibrary(resolve(root), opts.albumDepth);
-    for (const f of files) state.upsert(f);
-
-    let cfg = null, r2: R2 | null = null, api: AdminApi | null = null;
-    if (!opts.dryRun) {
-      cfg = loadConfig();
-      r2 = new R2(cfg);
-      api = new AdminApi(cfg);
-      const chk = await r2.check();
-      if (!chk.ok) { console.error(`\n  R2 unreachable: ${chk.error}\n`); process.exit(1); }
-    }
-
-    const queue = state.pending(opts.limit);
-    if (!queue.length) {
-      console.log('\n  nothing pending — everything is already ingested\n');
-      state.close(); return;
-    }
-
-    // Seed albums first so the metadata post never references a missing album.
-    if (api?.configured) {
-      const albums = [...summarise(files)].map(([id, a]) => ({ id, title: a.title, seededFrom: a.title }));
-      await api.ensureAlbums(albums);
-    }
-
-    console.log(`\n  ${queue.length.toLocaleString()} files to process${opts.dryRun ? '  (dry run)' : ''}\n`);
-
-    const limit = pLimit(opts.concurrency);
-    const batch: MediaRecord[] = [];
-    let done = 0, failed = 0, bytes = 0;
-    const started = Date.now();
-
-    const flush = async () => {
-      if (!batch.length || !api?.configured) { batch.length = 0; return; }
-      const chunk = batch.splice(0, batch.length);
-      await api.recordMedia(chunk);
-      for (const r of chunk) {
-        const row = queue.find((q) => q.hash === r.id);
-        if (row) state.setStatus(row.path, 'recorded', undefined, r.derivatives);
-      }
-    };
-
-    await Promise.all(queue.map((row) => limit(async () => {
-      try {
-        if (!row.hash) { row.hash = await hashFile(row.path); state.setHash(row.path, row.hash); }
-
-        const dup = state.findByHash(row.hash);
-        if (dup && dup.path !== row.path) {
-          state.setStatus(row.path, 'skipped', 'duplicate of ' + dup.path);
-          done++; return;
-        }
-
-        const res = await processFile(row, r2, {
-          preserveOriginal: opts.preserveOriginal,
-          previewAllVideo: opts.previewAllVideo,
-          dryRun: opts.dryRun,
-        });
-
-        bytes += res.uploadedBytes;
-        state.setStatus(row.path, opts.dryRun ? 'processed' : 'uploaded', undefined, res.record.derivatives);
-        // Persist before attempting the POST, so a Worker outage never
-        // discards work that took CPU to produce.
-        state.saveRecord(row.path, res.record);
-        batch.push(res.record);
-        if (batch.length >= 200) await flush();
-
-        done++;
-        if (done % 25 === 0 || done === queue.length) {
-          const pct = ((done / queue.length) * 100).toFixed(0);
-          const rate = done / ((Date.now() - started) / 1000);
-          const eta = (queue.length - done) / Math.max(rate, 0.01);
-          process.stdout.write(
-            `\r  ${pct}%  ${done}/${queue.length}  ${fmtBytes(bytes)}  ` +
-            `${rate.toFixed(1)}/s  eta ${fmtDur(eta * 1000)}${failed ? `  ${failed} failed` : ''}   `
-          );
-        }
-      } catch (e: any) {
-        failed++;
-        state.setStatus(row.path, 'failed', String(e?.message ?? e).slice(0, 500));
-      }
-    })));
-
-    await flush();
-    console.log(`\n\n  done in ${fmtDur(Date.now() - started)} — ${done} processed, ${failed} failed, ${fmtBytes(bytes)}\n`);
-    if (failed) console.log(`  re-run to retry failures, or 'imagerepo status' to inspect them\n`);
-    const held = state.unrecorded().length;
-    if (held) {
-      console.log(`  ${held} records held locally (worker not configured).`);
-      console.log(`  set ADMIN_API_URL + ADMIN_TOKEN, then: imagerepo flush\n`);
-    }
-    state.close();
-  });
-
-// ---------------------------------------------------------------- flush
-program
-  .command('flush')
-  .description('Send locally held metadata to the Worker. Safe to re-run.')
-  .option('--batch <n>', 'records per request', (v) => parseInt(v, 10), 200)
-  .action(async (opts) => {
-    const state = new IngestState(STATE_PATH);
-    const api = new AdminApi(loadConfig());
-    if (!api.configured) {
-      console.error('\n  ADMIN_API_URL / ADMIN_TOKEN not set in .env.ingest\n');
-      process.exit(1);
-    }
-    const held = state.unrecorded();
-    if (!held.length) { console.log('\n  nothing held — everything is recorded\n'); state.close(); return; }
-
-    const records: MediaRecord[] = held.map((h) => JSON.parse(h.record));
-    const used = new Set(records.flatMap((r) => r.albums));
-    const albums = state.albumTitles()
-      .filter((a) => used.has(a.id))
-      .map((a) => ({ id: a.id, title: a.title, seededFrom: a.title }));
-    await api.ensureAlbums(albums);
-
-    console.log(`\n  sending ${records.length} records...`);
-    let sent = 0;
-    for (let i = 0; i < records.length; i += opts.batch) {
-      const chunk = records.slice(i, i + opts.batch);
-      await api.recordMedia(chunk);
-      for (const r of chunk) {
-        const row = held.find((h) => JSON.parse(h.record).id === r.id);
-        if (row) state.setStatus(row.path, 'recorded');
-      }
-      sent += chunk.length;
-      process.stdout.write(`\r  ${sent}/${records.length}   `);
-    }
-    console.log(`\n  done — ${sent} recorded\n`);
-    state.close();
   });
 
 // ---------------------------------------------------------------- share
@@ -253,9 +272,9 @@ share
   .action(async (prefix: string) => {
     const api = new AdminApi(loadConfig());
     const { shares } = await api.listShares();
-    const hits = shares.filter((s) => String(s.token_hash).startsWith(prefix.replace(/\u2026|\.\.\./g, '')));
-    if (!hits.length) { console.error(`\n  no share matching "${prefix}"\n`); process.exit(1); }
-    if (hits.length > 1) { console.error(`\n  "${prefix}" matches ${hits.length} shares — be more specific\n`); process.exit(1); }
+    const hits = shares.filter((s) => String(s.token_hash).startsWith(prefix.replace(/…|\.\.\./g, '')));
+    if (!hits.length) fail(`no share matching "${prefix}"`);
+    if (hits.length > 1) fail(`"${prefix}" matches ${hits.length} shares — be more specific`);
     await api.revokeShare(hits[0].token_hash);
     console.log(`\n  revoked — album "${hits[0].album_id}"${hits[0].label ? ` (${hits[0].label})` : ''}\n`);
   });
@@ -285,19 +304,33 @@ program
 // --------------------------------------------------------------- status
 program
   .command('status')
-  .description('Show ingest progress from the local ledger.')
+  .description('Show what this computer has added, from the local ledger.')
   .action(() => {
-    const state = new IngestState(STATE_PATH);
-    const counts = state.counts();
-    const total = Object.values(counts).reduce((a, b) => a + b, 0);
-    if (!total) { console.log('\n  nothing scanned yet\n'); state.close(); return; }
+    const state = openLedger(STATE_PATH);
+    const files = state.files();
+    if (!files.length) { console.log('\n  nothing added yet\n'); state.close(); return; }
 
-    console.log(`\n  ${total.toLocaleString()} files tracked — ${fmtBytes(state.totalBytes())}\n`);
-    for (const [k, v] of Object.entries(counts)) {
-      console.log(`    ${k.padEnd(10)} ${String(v).padStart(7)}`);
+    const runs = state.runs();
+    const counts: Record<string, number> = {};
+    const albums = new Map<string, number>();
+    for (const f of files) {
+      const s = fileState(f, f.hash ? runs.get(f.hash) : undefined);
+      counts[s] = (counts[s] ?? 0) + 1;
+      albums.set(f.albumTitle, (albums.get(f.albumTitle) ?? 0) + 1);
+    }
+    const label: Record<string, string> = {
+      recorded: 'in your library', uploaded: 'uploaded, not yet recorded',
+      pending: 'not yet added', failed: 'failed',
+    };
+    console.log(`\n  ${files.length.toLocaleString()} files tracked — ${fmtBytes(files.reduce((n, f) => n + f.size, 0))}\n`);
+    for (const k of ['recorded', 'uploaded', 'pending', 'failed']) {
+      if (counts[k]) console.log(`    ${String(counts[k]).padStart(7)}  ${label[k]}`);
     }
     console.log('\n  albums:');
-    for (const a of state.albums()) console.log(`    ${a.album.padEnd(32)} ${String(a.n).padStart(6)}`);
+    for (const [title, n] of [...albums].sort()) console.log(`    ${title.padEnd(32)} ${String(n).padStart(6)}`);
+    console.log(`\n  stages:  photo ${STAGES.photo.map((s) => `${s.name}@${s.version}`).join(' → ')}`);
+    console.log(`           video ${STAGES.video.map((s) => `${s.name}@${s.version}`).join(' → ')}`);
+    if (counts.failed) console.log(`\n  "imagerepo failures" shows what went wrong`);
     console.log();
     state.close();
   });
@@ -329,14 +362,14 @@ program
     } catch (e: any) { line(false, 'sharp + AVIF', e?.message ?? ''); }
 
     let cfg;
-    try { cfg = loadConfig(); line(true, 'config', `bucket "${cfg.bucket}"`); }
-    catch (e: any) { line(false, 'config', e?.message?.split('\n')[0] ?? ''); console.log(); return; }
+    try { cfg = loadConfig(); line(true, 'config', `${basename(ENV_PATH)}, bucket "${cfg.bucket}"`); }
+    catch (e: any) { line(false, 'config', e?.message?.split('\n').join(' ') ?? ''); console.log(); return; }
 
     const chk = await new R2(cfg).check();
     line(chk.ok, 'R2 bucket', chk.ok ? `reachable (${chk.objects} objects sampled)` : chk.error ?? '');
 
     const api = new AdminApi(cfg);
-    if (!api.configured) line(false, 'worker api', 'ADMIN_API_URL / ADMIN_TOKEN not set (fine until Phase 2)');
+    if (!api.configured) line(false, 'worker api', 'ADMIN_API_URL / ADMIN_TOKEN not set');
     else { const h = await api.health(); line(h.ok, 'worker api', h.ok ? cfg.apiUrl : h.error ?? ''); }
     console.log();
   });

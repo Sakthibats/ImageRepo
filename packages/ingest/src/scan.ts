@@ -8,6 +8,12 @@ const VIDEO_EXT = new Set(['.mp4', '.mov', '.m4v']);
 const IGNORE_DIR = new Set(['.git', '.DS_Store', '@eaDir', '.thumbnails', 'node_modules']);
 const IGNORE_FILE = /^(\._|\.DS_Store|Thumbs\.db)/i;
 
+/** Whether a filename is something we ingest, and as what. */
+export function kindOf(name: string): 'photo' | 'video' | null {
+  const ext = extname(name).toLowerCase();
+  return PHOTO_EXT.has(ext) ? 'photo' : VIDEO_EXT.has(ext) ? 'video' : null;
+}
+
 export interface ScannedFile {
   path: string;
   album: string;       // slug derived from folder structure
@@ -37,7 +43,12 @@ export function slugify(s: string): string {
  * A flat library (the common case) is unaffected by the setting. Files loose
  * at the root go to 'unsorted'.
  */
-export async function scanLibrary(root: string, depth = 1): Promise<ScannedFile[]> {
+export async function scanLibrary(
+  root: string,
+  depth = 1,
+  /** Where files sitting directly in `root` go. */
+  loose: { album: string; albumTitle: string } = { album: 'unsorted', albumTitle: 'Unsorted' },
+): Promise<ScannedFile[]> {
   const out: ScannedFile[] = [];
 
   async function walk(dir: string) {
@@ -55,15 +66,14 @@ export async function scanLibrary(root: string, depth = 1): Promise<ScannedFile[
       if (e.isDirectory()) { await walk(full); continue; }
       if (!e.isFile() || IGNORE_FILE.test(e.name)) continue;
 
-      const ext = extname(e.name).toLowerCase();
-      const kind = PHOTO_EXT.has(ext) ? 'photo' : VIDEO_EXT.has(ext) ? 'video' : null;
+      const kind = kindOf(e.name);
       if (!kind) continue;
 
       const rel = relative(root, dir);
       const parts = rel ? rel.split(sep).filter(Boolean) : [];
       const used = depth > 0 ? parts.slice(0, depth) : parts;
-      const albumTitle = used.length ? used.join(' / ') : 'Unsorted';
-      const album = used.length ? slugify(used.join('-')) : 'unsorted';
+      const albumTitle = used.length ? used.join(' / ') : loose.albumTitle;
+      const album = used.length ? slugify(used.join('-')) : loose.album;
 
       let s;
       try { s = await stat(full); } catch { continue; }

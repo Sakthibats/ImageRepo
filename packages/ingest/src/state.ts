@@ -2,8 +2,6 @@ import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export type FileStatus = 'pending' | 'processed' | 'uploaded' | 'recorded' | 'failed' | 'skipped';
-
 export interface FileRow {
   path: string;
   album: string;
@@ -12,16 +10,40 @@ export interface FileRow {
   size: number;
   mtime: number;
   hash: string | null;
-  status: FileStatus;
+  /** Set when the file could not even be read; stage failures live in stage_runs. */
   error: string | null;
-  derivatives: string | null;
-  record: string | null;
+  /** The recordKey this file was last sent to the Worker with, if any. */
+  recordedKey: string | null;
 }
+
+export interface StageRun {
+  stage: string;
+  version: number;
+  state: 'done' | 'failed';
+  attempts: number;
+  error: string | null;
+  data: unknown;
+}
+
+/** A row from a ledger written before stages existed. */
+export interface LegacyRow {
+  path: string; kind: 'photo' | 'video'; album: string; hash: string | null;
+  status: string; record: string | null;
+}
+
+const FILE_COLS = `path, album, COALESCE(album_title, album) AS albumTitle, kind, size, mtime,
+                   hash, error, recorded_key AS recordedKey`;
 
 /**
  * Local ingest ledger. This is what makes a 100GB overnight run resumable:
- * every file's progress is committed as it happens, so an interrupted run
- * picks up exactly where it stopped instead of re-hashing 13,000 files.
+ * every stage's result is committed as it happens, so an interrupted run
+ * picks up exactly where it stopped instead of redoing 13,000 files.
+ *
+ * Two tables, because two different things are being remembered:
+ *   files       one row per path — which album it is filed under, and whether
+ *               that has been recorded in the database
+ *   stage_runs  one row per (content hash, stage) — the processing itself,
+ *               which belongs to the bytes, not to where they happen to sit
  */
 export class IngestState {
   private db: Database.Database;
@@ -32,114 +54,144 @@ export class IngestState {
     this.db.pragma('journal_mode = WAL');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS files (
-        path        TEXT PRIMARY KEY,
-        album       TEXT NOT NULL,
-        album_title TEXT,
-        kind        TEXT NOT NULL,
-        size        INTEGER NOT NULL,
-        mtime       INTEGER NOT NULL,
-        hash        TEXT,
-        status      TEXT NOT NULL DEFAULT 'pending',
-        error       TEXT,
-        derivatives TEXT,
-        record      TEXT,
-        updated_at  INTEGER
+        path         TEXT PRIMARY KEY,
+        album        TEXT NOT NULL,
+        album_title  TEXT,
+        kind         TEXT NOT NULL,
+        size         INTEGER NOT NULL,
+        mtime        INTEGER NOT NULL,
+        hash         TEXT,
+        status       TEXT NOT NULL DEFAULT 'pending',
+        error        TEXT,
+        derivatives  TEXT,
+        record       TEXT,
+        recorded_key TEXT,
+        updated_at   INTEGER
       );
       CREATE INDEX IF NOT EXISTS idx_status ON files(status);
       CREATE INDEX IF NOT EXISTS idx_hash   ON files(hash);
+
+      CREATE TABLE IF NOT EXISTS stage_runs (
+        hash       TEXT NOT NULL,
+        stage      TEXT NOT NULL,
+        version    INTEGER NOT NULL,
+        state      TEXT NOT NULL,
+        attempts   INTEGER NOT NULL DEFAULT 1,
+        error      TEXT,
+        data       TEXT,
+        updated_at INTEGER,
+        PRIMARY KEY (hash, stage)
+      );
     `);
-    // Migration for ledgers created before `record` existed.
+    // Columns added since the first ledgers were written.
     const cols = this.db.prepare(`PRAGMA table_info(files)`).all() as { name: string }[];
-    if (!cols.some((c) => c.name === 'record')) {
-      this.db.exec(`ALTER TABLE files ADD COLUMN record TEXT`);
-    }
-    if (!cols.some((c) => c.name === 'album_title')) {
-      this.db.exec(`ALTER TABLE files ADD COLUMN album_title TEXT`);
+    for (const col of ['record', 'album_title', 'recorded_key']) {
+      if (!cols.some((c) => c.name === col)) this.db.exec(`ALTER TABLE files ADD COLUMN ${col} TEXT`);
     }
   }
 
-  /** Insert if new; reset to pending if the file changed on disk since last run. */
-  upsert(f: Omit<FileRow, 'hash' | 'status' | 'error' | 'derivatives' | 'record'>): void {
+  // ------------------------------------------------------------------ files
+
+  /** Insert if new; forget everything known about the file if it changed on disk. */
+  upsert(f: Pick<FileRow, 'path' | 'album' | 'albumTitle' | 'kind' | 'size' | 'mtime'>): void {
     this.db.prepare(`
       INSERT INTO files (path, album, album_title, kind, size, mtime, updated_at)
       VALUES (@path, @album, @albumTitle, @kind, @size, @mtime, unixepoch())
       ON CONFLICT(path) DO UPDATE SET
-        album       = excluded.album,
-        album_title = excluded.album_title,
-        size   = excluded.size,
-        mtime  = excluded.mtime,
-        status = CASE WHEN files.size <> excluded.size OR files.mtime <> excluded.mtime
-                      THEN 'pending' ELSE files.status END,
-        hash   = CASE WHEN files.size <> excluded.size OR files.mtime <> excluded.mtime
-                      THEN NULL ELSE files.hash END
+        album        = excluded.album,
+        album_title  = excluded.album_title,
+        kind         = excluded.kind,
+        hash         = CASE WHEN files.size <> excluded.size OR files.mtime <> excluded.mtime
+                            THEN NULL ELSE files.hash END,
+        recorded_key = CASE WHEN files.size <> excluded.size OR files.mtime <> excluded.mtime
+                            THEN NULL ELSE files.recorded_key END,
+        error        = NULL,
+        size         = excluded.size,
+        mtime        = excluded.mtime
     `).run(f);
+  }
+
+  /** Rows for the given paths, or the whole ledger. */
+  files(paths?: string[]): FileRow[] {
+    const all = this.db.prepare(`SELECT ${FILE_COLS} FROM files ORDER BY album, path`).all() as FileRow[];
+    if (!paths) return all;
+    const wanted = new Set(paths);
+    return all.filter((f) => wanted.has(f.path));
   }
 
   setHash(path: string, hash: string) {
     this.db.prepare(`UPDATE files SET hash=?, updated_at=unixepoch() WHERE path=?`).run(hash, path);
   }
 
-  setStatus(path: string, status: FileStatus, error?: string, derivatives?: string[]) {
-    this.db.prepare(
-      `UPDATE files SET status=?, error=?, derivatives=COALESCE(?, derivatives), updated_at=unixepoch() WHERE path=?`
-    ).run(status, error ?? null, derivatives ? JSON.stringify(derivatives) : null, path);
+  setError(path: string, error: string | null) {
+    this.db.prepare(`UPDATE files SET error=?, updated_at=unixepoch() WHERE path=?`).run(error, path);
   }
 
-  /**
-   * Stores the computed metadata alongside the file. Processing is expensive
-   * (hash + decode + derive); the POST that ships it is not. Persisting here
-   * means an unreachable Worker costs a retry, not hours of recomputation.
-   */
-  saveRecord(path: string, record: unknown) {
-    this.db.prepare(`UPDATE files SET record=? WHERE path=?`)
-      .run(JSON.stringify(record), path);
+  setRecorded(path: string, key: string | null) {
+    this.db.prepare(`UPDATE files SET recorded_key=?, updated_at=unixepoch() WHERE path=?`).run(key, path);
   }
 
-  /** Files whose bytes are up but whose metadata never reached the Worker. */
-  unrecorded(): { path: string; record: string }[] {
-    return this.db.prepare(
-      `SELECT path, record FROM files
-       WHERE record IS NOT NULL AND status IN ('uploaded','processed')
-       ORDER BY album, path`
-    ).all() as { path: string; record: string }[];
+  /** A human-readable summary, kept only for anyone opening the ledger by hand. */
+  setStatus(path: string, status: string) {
+    this.db.prepare(`UPDATE files SET status=? WHERE path=?`).run(status, path);
   }
 
-  /** Album id -> human title, as seen on disk. Lets `flush` name albums properly. */
+  // ------------------------------------------------------------- stage runs
+
+  /** Every stage result, grouped by content hash. */
+  runs(): Map<string, Map<string, StageRun>> {
+    const rows = this.db.prepare(
+      `SELECT hash, stage, version, state, attempts, error, data FROM stage_runs`
+    ).all() as (Omit<StageRun, 'data'> & { hash: string; data: string | null })[];
+    const out = new Map<string, Map<string, StageRun>>();
+    for (const { hash, data, ...r } of rows) {
+      if (!out.has(hash)) out.set(hash, new Map());
+      out.get(hash)!.set(r.stage, { ...r, data: data ? JSON.parse(data) : null });
+    }
+    return out;
+  }
+
+  saveRun(hash: string, stage: string, version: number, data: unknown) {
+    this.db.prepare(`
+      INSERT INTO stage_runs (hash, stage, version, state, attempts, error, data, updated_at)
+      VALUES (?, ?, ?, 'done', 1, NULL, ?, unixepoch())
+      ON CONFLICT(hash, stage) DO UPDATE SET
+        version = excluded.version, state = 'done', error = NULL, data = excluded.data,
+        attempts = stage_runs.attempts + 1, updated_at = excluded.updated_at
+    `).run(hash, stage, version, JSON.stringify(data ?? null));
+  }
+
+  failRun(hash: string, stage: string, version: number, error: string) {
+    this.db.prepare(`
+      INSERT INTO stage_runs (hash, stage, version, state, attempts, error, data, updated_at)
+      VALUES (?, ?, ?, 'failed', 1, ?, NULL, unixepoch())
+      ON CONFLICT(hash, stage) DO UPDATE SET
+        version = excluded.version, state = 'failed', error = excluded.error, data = NULL,
+        attempts = stage_runs.attempts + 1, updated_at = excluded.updated_at
+    `).run(hash, stage, version, error.slice(0, 500));
+  }
+
+  // ------------------------------------------------------------ pre-stages
+
+  /** 0 = written before stages existed and not yet converted. */
+  get schemaVersion(): number {
+    return this.db.pragma('user_version', { simple: true }) as number;
+  }
+  set schemaVersion(v: number) { this.db.pragma(`user_version = ${Math.trunc(v)}`); }
+
+  legacyRows(): LegacyRow[] {
+    return this.db.prepare(`SELECT path, kind, album, hash, status, record FROM files`).all() as LegacyRow[];
+  }
+
+  transaction(fn: () => void) { this.db.transaction(fn)(); }
+
+  // ---------------------------------------------------------------- totals
+
+  /** Album id -> human title, as seen on disk. */
   albumTitles(): { id: string; title: string }[] {
     return this.db.prepare(
-      `SELECT album AS id, COALESCE(MAX(album_title), album) AS title
-       FROM files GROUP BY album`
+      `SELECT album AS id, COALESCE(MAX(album_title), album) AS title FROM files GROUP BY album`
     ).all() as { id: string; title: string }[];
-  }
-
-  pending(limit?: number): FileRow[] {
-    const sql = `SELECT * FROM files WHERE status IN ('pending','failed') ORDER BY album, path`
-      + (limit ? ` LIMIT ${limit}` : '');
-    return this.db.prepare(sql).all() as FileRow[];
-  }
-
-  /** Same bytes already handled under a different path — dedupe without re-work. */
-  findByHash(hash: string): FileRow | undefined {
-    return this.db.prepare(
-      `SELECT * FROM files WHERE hash=? AND status IN ('uploaded','recorded') LIMIT 1`
-    ).get(hash) as FileRow | undefined;
-  }
-
-  counts(): Record<string, number> {
-    const rows = this.db.prepare(`SELECT status, COUNT(*) n FROM files GROUP BY status`).all() as
-      { status: string; n: number }[];
-    return Object.fromEntries(rows.map((r) => [r.status, r.n]));
-  }
-
-  albums(): { album: string; n: number }[] {
-    return this.db.prepare(
-      `SELECT album, COUNT(*) n FROM files GROUP BY album ORDER BY album`
-    ).all() as { album: string; n: number }[];
-  }
-
-  totalBytes(): number {
-    const r = this.db.prepare(`SELECT COALESCE(SUM(size),0) b FROM files`).get() as { b: number };
-    return r.b;
   }
 
   close() { this.db.close(); }

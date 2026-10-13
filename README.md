@@ -5,9 +5,8 @@ A private photo and video library on Cloudflare R2 + D1, with revocable share li
 - **Private by default.** The full library and every write route sits behind Cloudflare Access.
 - **Share links** are unguessable, revocable, optionally passcoded and expiring. No login for viewers.
 - **Location stays in the database.** GPS is read at ingest and stored in D1. It is
-  removed from JPEG and video originals before upload, and never written into
-  anything a guest receives. See [How media is treated](#how-media-is-treated) for
-  the formats this does not yet cover.
+  removed from every original the CLI uploads (JPEG, PNG, HEIC and video) without
+  touching a pixel, and never written into anything a guest receives.
 
 ## Layout
 
@@ -45,6 +44,7 @@ npx wrangler r2 bucket create imagerepo
 npx wrangler d1 execute imagerepo --file=../../schema.sql --remote
 npx wrangler d1 execute imagerepo --file=../../migrations/001_drv_ext.sql --remote
 npx wrangler d1 execute imagerepo --file=../../migrations/002_tags.sql --remote
+npx wrangler d1 execute imagerepo --file=../../migrations/003_stages.sql --remote
 
 # Worker secrets
 npx wrangler secret put ADMIN_TOKEN     # bearer token the CLI presents
@@ -69,37 +69,76 @@ Finally, configure the CLI:
 
 ```bash
 cp .env.ingest.example .env.ingest      # R2 keys, Worker URL, ADMIN_TOKEN, service token
-npm run ingest -- doctor                # check tooling + connectivity
+npx imagerepo doctor                    # check tooling + connectivity
 ```
 
-## Ingesting a library
+`npx imagerepo` works from anywhere inside this repo. To type plain `imagerepo`
+from any folder, run `npm link` once in `packages/ingest`. If the command is not
+found after pulling changes, run `npm install` again.
 
-Run the CLI from the repo root; it reads `.env.ingest` and keeps its ledger in
-`.ingest/state.db`, both relative to the current directory.
+## Adding photos from your laptop
 
 ```bash
-npm run ingest -- scan ~/Photos                         # see what would be ingested
-npm run ingest -- process ~/Photos --dry-run --limit 50
-npm run ingest -- process ~/Photos                      # the real run
-npm run ingest -- status
+npx imagerepo add ~/Pictures/Goa                 # one album, named "Goa"
+npx imagerepo add ~/Pictures                     # each subfolder becomes an album
+npx imagerepo add IMG_1.jpg IMG_2.jpg -a "Mum"   # these files, into the album "Mum"
+npx imagerepo add ~/Pictures/Goa --dry-run       # see what would happen first
 ```
+
+`add` takes any mix of files and folders. It checks your setup, shows what it
+found and which albums are new, asks before uploading, then shows progress and
+a summary. When it finishes the photos are visible in the web app.
+
+- **Albums.** A folder's subfolders become albums, and photos sitting directly
+  in the folder go to an album named after it. A single file goes to an album
+  named after its parent folder. `--album` puts everything in one album, matching
+  an existing album by name. `--album-depth` changes how many folder levels form
+  the name.
+- **Safe to re-run.** Anything already in your library is skipped. The same photo
+  in two folders is uploaded once and filed in both albums.
+- **Resumable.** Progress is saved per file and per step, so an interrupted run
+  continues where it stopped.
+- **Dry runs are harmless.** `--dry-run` uploads nothing and remembers nothing.
 
 | Command | What it does |
 |---|---|
-| `scan <root>` | Walk the folder and list albums and sizes. Touches nothing. |
-| `process <root>` | Hash, derive, strip metadata, upload to R2, record in D1. |
-| `flush` | Send metadata held locally because the Worker was unreachable. |
+| `add <paths...>` | Add files or folders, with a preview and confirmation. |
+| `retry` | Try again: everything that failed or was left unfinished. |
+| `failures` | List files that could not be added, and why. |
+| `status` | Show what this computer has added. |
+| `process <root>` | `add` for a whole library, without asking. Loose files go to `unsorted`. |
+| `flush` | Record uploads the database has not heard about (after a Worker outage). |
+| `scan <root>` | Walk a folder and list albums and sizes. Touches nothing. |
 | `bake [album]` | Regenerate album manifests. |
 | `share create\|list\|revoke\|albums` | Manage share links. |
-| `status` | Show progress from the local ledger. |
 | `doctor` | Check tooling and cloud connectivity. |
 
-Folders become albums: by default the first folder level under the root is the
-album, and `--album-depth` changes that. Files loose at the root go to `unsorted`.
+The CLI reads `.env.ingest` and keeps its ledger in `.ingest/state.db`, both at
+the repo root, whichever folder you run it from. The ledger only knows what this
+computer uploaded: a photo deleted in the web app still counts as added here.
 
-Runs are resumable. Each file's progress is committed to the ledger as it
-happens, a file's id is the hash of its bytes so duplicates are skipped, and
-re-running `process` retries only what is pending or failed.
+### How processing is organised
+
+Each file goes through a list of stages, defined in
+`packages/ingest/src/stages/`:
+
+| | Stages |
+|---|---|
+| Photo | `exif` → `original` → `derivatives` |
+| Video | `probe` → `original` → `poster` → `preview` |
+
+Each stage does one job, uploads its own output, and has a version. The ledger
+stores every stage's result against the file's content hash, and the database
+records which stages each item has completed (`media_stages`). Nothing keeps a
+"finished" flag: a file is done when every stage has a result at its current
+version.
+
+That is what makes the pipeline extensible. To add a step, write a stage and add
+it to the list in `stages/index.ts`; every item already in the library then lacks
+it, and re-running `add` on those folders does only the new step. To redo a step
+for everything, bump its version. The Worker exposes the same view for other
+runners: `GET /admin/stages/pending?stage=<name>&version=<n>` lists the items
+still waiting on a stage, and `POST /admin/stages/report` records results.
 
 ## The web app
 
@@ -120,9 +159,9 @@ locally.
 Create one from an album's Share button, or from the CLI:
 
 ```bash
-npm run ingest -- share create goa-2023 --label "sent to mum" --days 30 --passcode hunter2
-npm run ingest -- share list
-npm run ingest -- share revoke <token-hash-prefix>
+npx imagerepo share create goa-2023 --label "sent to mum" --days 30 --passcode hunter2
+npx imagerepo share list
+npx imagerepo share revoke <token-hash-prefix>
 ```
 
 - The URL is shown once. Only its SHA-256 is stored, so a database dump exposes
@@ -139,11 +178,15 @@ Ingested with the CLI:
 | | stored in R2 | GPS | notes |
 |---|---|---|---|
 | JPEG original | yes | removed | EXIF, XMP and IPTC segments dropped; pixels bit-identical, ICC profile kept |
-| HEIC / PNG original | yes | **kept** | uploaded byte-for-byte; no stripper for these formats yet |
-| AVIF derivatives (320/1024/2048) | yes | n/a | re-encoded, never carries metadata |
+| PNG original | yes | removed | EXIF and text chunks dropped; pixels bit-identical, colour profile kept |
+| HEIC original | yes | removed | EXIF and XMP overwritten in place; file layout and pixels unchanged |
+| AVIF derivatives (320/1024/2048) | yes | n/a | re-encoded, never carries metadata; HEIC is decoded with `sips` on macOS, otherwise ffmpeg |
 | Video original (MP4/MOV/M4V) | yes, as MP4 | removed | lossless remux, `-map_metadata -1`, faststart |
 | Video poster | yes | n/a | frame grab, then the photo pipeline |
 | Video preview (720p) | if needed | n/a | only for non-H.264, or `--preview-all-video` |
+
+A PNG or HEIC whose structure cannot be parsed is refused, not uploaded as it is.
+Everything the camera wrote is kept in D1 (`media.raw_meta`), owner-side only.
 
 Pass `--preserve-original` to upload byte-exact originals instead, keeping GPS
 in R2. Only do this if R2 is meant to be your archival copy.
@@ -165,8 +208,16 @@ backfill, and anything you want stored at full quality.
 npm run -w @imagerepo/ingest test
 ```
 
-`test/strip.test.ts` asserts GPS removal is lossless and that ICC profiles survive.
-`test/video.test.ts` asserts the remux drops location while frames stay bit-identical.
+- `test/strip.test.ts`: JPEG GPS removal is lossless and ICC profiles survive.
+- `test/formats.test.ts`: the same for PNG and HEIC. The HEIC half needs macOS
+  (`sips` makes the fixture) and is skipped elsewhere.
+- `test/video.test.ts`: the remux drops location while frames stay bit-identical.
+- `test/runner.test.ts`: the whole `add` flow against an in-memory bucket and a
+  fake Worker: dry run then real run, interruption and resume, duplicates,
+  re-filing into another album, a Worker outage, a stage version bump, and
+  conversion of ledgers written before stages existed.
+- `test/e2e-local.ts`: the same flow against a real local Worker and database.
+  It is not part of `npm test`; the steps to run it are at the top of the file.
 
-The Worker and web app have no tests yet; `npm run -w @imagerepo/worker typecheck`
-and the web build's `tsc` step are the only checks there.
+The Worker and web app have no tests of their own; `npm run -w @imagerepo/worker
+typecheck` and the web build's `tsc` step are the only checks there.

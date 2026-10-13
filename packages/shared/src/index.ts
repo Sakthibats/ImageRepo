@@ -40,6 +40,17 @@ export interface MediaRecord {
   albums: string[];
   /** Variants the CLI actually uploaded, e.g. ['320','1024','2048','poster','preview']. */
   derivatives: string[];
+
+  /** Everything the camera wrote, before stripping. Server-side only, like lat/lon. */
+  rawMeta?: Record<string, unknown>;
+  /** Processing stages completed for this media, and at which version. */
+  stages?: StageRef[];
+}
+
+/** A processing stage at a specific version, e.g. { name: 'derivatives', version: 1 }. */
+export interface StageRef {
+  name: string;
+  version: number;
 }
 
 /** R2 key layout. Content-addressed, so every key is immutable and cacheable forever. */

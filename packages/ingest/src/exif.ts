@@ -68,3 +68,42 @@ export function dateFromFilename(name: string): number | undefined {
   const t = Date.parse(`${y}-${mo}-${d}T${h}:${mi}:${s}Z`);
   return isNaN(t) ? undefined : Math.floor(t / 1000);
 }
+
+const MAX_RAW_META = 24 * 1024;
+
+/** Makes a parsed tag value JSON-safe, dropping binary blobs. */
+function plain(v: unknown): unknown {
+  if (v instanceof Date) return isNaN(+v) ? undefined : v.toISOString();
+  if (v instanceof Uint8Array || v instanceof ArrayBuffer) return undefined;
+  if (Array.isArray(v)) return v.length <= 16 ? v.map(plain).filter((x) => x !== undefined) : undefined;
+  if (typeof v === 'string') return v.length <= 500 ? v : undefined;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : undefined;
+  if (typeof v === 'boolean') return v;
+  return undefined;                    // nested objects, maker notes, etc.
+}
+
+/**
+ * Every tag the camera wrote, as plain JSON. The uploaded original is
+ * stripped, so this is the only copy: a later stage that wants a field we do
+ * not model today (lens serial, subject distance, altitude) reads it from here.
+ */
+export async function readRawMeta(path: string): Promise<Record<string, unknown> | undefined> {
+  let raw: Record<string, unknown> | undefined;
+  try {
+    raw = await exifr.parse(path, {
+      tiff: true, exif: true, gps: true,
+      xmp: false, icc: false, iptc: false, makerNote: false, userComment: false,
+    });
+  } catch {
+    return undefined;
+  }
+  if (!raw) return undefined;
+
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const value = plain(v);
+    if (value !== undefined) out[k] = value;
+  }
+  if (!Object.keys(out).length) return undefined;
+  return JSON.stringify(out).length <= MAX_RAW_META ? out : undefined;
+}

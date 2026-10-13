@@ -19,6 +19,8 @@ export interface VideoProbe {
   lat?: number;
   lon?: number;
   rotation: number;
+  /** Container and stream tags as written by the camera. Stripped from the upload. */
+  raw?: Record<string, unknown>;
 }
 
 /** Reads stream + container metadata without decoding a single frame. */
@@ -56,7 +58,16 @@ export async function probeVideo(path: string): Promise<VideoProbe> {
     lat: geo ? Number(geo[1]) : undefined,
     lon: geo ? Number(geo[2]) : undefined,
     rotation: Math.abs(Number(matrixRot ?? tags['rotate'] ?? 0)) % 360,
+    raw: rawTags(tags),
   };
+}
+
+function rawTags(tags: Record<string, unknown>): Record<string, unknown> | undefined {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(tags).slice(0, 64)) {
+    if (typeof v === 'string' && v.length <= 500) out[k] = v;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** True when the moov atom precedes mdat, i.e. the file streams progressively. */

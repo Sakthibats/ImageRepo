@@ -7,6 +7,7 @@ import { bakeAlbum, bakeIndex } from './manifest.js';
 import { mutations } from './mutations.js';
 import { upload } from './upload.js';
 import { tagWrites } from './tags.js';
+import { stages } from './stages.js';
 
 const MAX_RECORDS_PER_CALL = 500;
 
@@ -17,6 +18,7 @@ admin.use('*', requireAdmin());
 admin.route('/', mutations);
 admin.route('/upload', upload);
 admin.route('/tags', tagWrites);
+admin.route('/stages', stages);
 
 admin.get('/health', async (c) => {
   // Prove both bindings actually work, not just that the Worker is up.

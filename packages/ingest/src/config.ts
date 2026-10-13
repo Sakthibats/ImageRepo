@@ -1,5 +1,5 @@
 import { readFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { ENV_PATH } from './paths.js';
 
 export interface Config {
   accountId: string;
@@ -30,7 +30,7 @@ function loadDotEnv(path: string): Record<string, string> {
 }
 
 export function loadConfig(): Config {
-  const file = loadDotEnv(resolve(process.cwd(), '.env.ingest'));
+  const file = loadDotEnv(ENV_PATH);
   const get = (k: string) => process.env[k] ?? file[k] ?? '';
 
   const cfg: Config = {
@@ -44,12 +44,17 @@ export function loadConfig(): Config {
     accessClientSecret: get('CF_ACCESS_CLIENT_SECRET'),
   };
 
-  const missing = (['accountId', 'accessKeyId', 'secretAccessKey'] as const)
-    .filter((k) => !cfg[k]);
+  const required = {
+    accountId: 'CF_ACCOUNT_ID', accessKeyId: 'R2_ACCESS_KEY_ID', secretAccessKey: 'R2_SECRET_ACCESS_KEY',
+  } as const;
+  const missing = (Object.keys(required) as (keyof typeof required)[])
+    .filter((k) => !cfg[k]).map((k) => required[k]);
   if (missing.length) {
     throw new Error(
-      `Missing config: ${missing.join(', ')}.\n` +
-      `Create .env.ingest in the repo root (see .env.ingest.example).`
+      `Missing settings: ${missing.join(', ')}.\n  ` +
+      (existsSync(ENV_PATH)
+        ? `Fill them in at ${ENV_PATH}`
+        : `No settings file found. Copy .env.ingest.example to ${ENV_PATH} and fill it in.`)
     );
   }
   return cfg;
