@@ -111,7 +111,8 @@ h1, h2, h3 { letter-spacing: -0.012em; }
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
   padding: 28px 0 20px;
   position: sticky; top: 0; z-index: 20;
-  background: linear-gradient(var(--bg) 62%, rgba(250, 245, 240, 0));
+  /* Solid, so photos scrolling underneath are hidden cleanly, not faded. */
+  background: var(--bg);
 }
 .head h1::after {
   content: ''; display: block; height: 3px; width: 26px; margin-top: 5px;
@@ -165,6 +166,8 @@ h1, h2, h3 { letter-spacing: -0.012em; }
 .btn.primary.danger { background: var(--danger); color: #fff; border-color: transparent; }
 
 .btn.small { padding: 6px 13px; font-size: 13px; }
+.btn.sort { display: inline-flex; align-items: center; gap: 6px; color: var(--fg-soft); }
+.btn.sort span { color: var(--accent); font-weight: 700; }
 
 .icon-btn {
   background: none; border: none; color: var(--muted); cursor: pointer;
@@ -474,9 +477,10 @@ h1, h2, h3 { letter-spacing: -0.012em; }
 .tl-head {
   display: flex; align-items: center; gap: 10px;
   font-size: 16px; font-weight: 700; margin: 0 0 12px;
-  position: sticky; top: 76px; z-index: 10;
-  padding: 6px 0;
-  background: linear-gradient(var(--bg) 70%, rgba(250, 245, 240, 0));
+  /* Sits flush under the page header, whose height varies when it wraps. */
+  position: sticky; top: var(--head-h, 92px); z-index: 10;
+  padding: 2px 0 10px;
+  background: var(--bg);
 }
 .tl-count {
   font-size: 11.5px; font-weight: 700; color: var(--muted);

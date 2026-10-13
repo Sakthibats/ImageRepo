@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { OwnerManifestItem } from '@imagerepo/shared';
 import { fetchIndex, fetchAlbum, assetUrl, type AlbumSummary } from './api.ts';
 import { adminApi } from './admin.ts';
@@ -12,7 +12,7 @@ import { TimelineView } from './components/TimelineView.tsx';
 import { TagsView } from './components/TagsView.tsx';
 import { TagDialog } from './components/TagDialog.tsx';
 import { shareTokenFromPath } from './share.ts';
-import type { Item } from './tags.ts';
+import { loadSort, saveSort, type Item, type SortOrder } from './tags.ts';
 
 type Tab = 'photos' | 'albums' | 'tags';
 
@@ -27,6 +27,24 @@ export default function App() {
 function sortAlbums(albums: AlbumSummary[]): AlbumSummary[] {
   return [...albums].sort((a, b) =>
     (b.newest ?? 0) - (a.newest ?? 0) || a.title.localeCompare(b.title));
+}
+
+/**
+ * Publishes the sticky header's height as --head-h, so the month headings can
+ * stick directly beneath it. The header wraps on narrow screens, so its height
+ * is not a constant CSS could know.
+ */
+function useHeadHeight() {
+  const observer = useRef<ResizeObserver | null>(null);
+  return useCallback((el: HTMLElement | null) => {
+    observer.current?.disconnect();
+    if (!el) return;
+    const publish = () =>
+      document.documentElement.style.setProperty('--head-h', `${el.offsetHeight}px`);
+    observer.current = new ResizeObserver(publish);
+    observer.current.observe(el);
+    publish();
+  }, []);
 }
 
 type Dialog =
@@ -54,6 +72,8 @@ function OwnerApp() {
   const [dialog, setDialog] = useState<Dialog>({ kind: 'none' });
   const [text, setText] = useState('');
   const [toast, setToast] = useState<string | null>(null);
+  const [sort, setSort] = useState<SortOrder>(loadSort);
+  const headRef = useHeadHeight();
 
   const notify = useCallback((msg: string) => {
     setToast(msg);
@@ -103,8 +123,12 @@ function OwnerApp() {
       setLastClicked(index);
     }, [lastClicked]);
 
+  // An album's manifest is baked oldest first; the other order is its mirror.
+  const shown = useMemo(
+    () => (items && sort === 'desc' ? [...items].reverse() : items), [items, sort]);
+
   const toggle = useCallback((id: string, index: number, shiftKey: boolean) =>
-    toggleIn(items ?? [])(id, index, shiftKey), [toggleIn, items]);
+    toggleIn(shown ?? [])(id, index, shiftKey), [toggleIn, shown]);
 
   const selectedIds = useMemo(() => [...selection], [selection]);
 
@@ -124,6 +148,20 @@ function OwnerApp() {
   }
   if (!albums) return <main className="center"><p className="muted">Loading…</p></main>;
 
+  const sortButton = (
+    <button className="btn small sort" title="Change the order photos are shown in"
+            onClick={() => {
+              const next: SortOrder = sort === 'asc' ? 'desc' : 'asc';
+              setSort(next); saveSort(next);
+              // Positions in the list change, so a range selection anchor no longer means anything.
+              setLastClicked(null); setLightbox(null); setGlobalLb(null);
+              window.scrollTo(0, 0);
+            }}>
+      <span aria-hidden="true">{sort === 'asc' ? '↑' : '↓'}</span>
+      {sort === 'asc' ? 'Oldest first' : 'Newest first'}
+    </button>
+  );
+
   const tabs = (
     <nav className="tabs" role="tablist">
       {(['photos', 'albums', 'tags'] as Tab[]).map((t) => (
@@ -140,10 +178,11 @@ function OwnerApp() {
   if (!open) {
     return (
       <main>
-        <header className="head">
+        <header className="head" ref={headRef}>
           <h1>Photos</h1>
           {tabs}
           <div className="push row-gap">
+            {tab !== 'albums' && sortButton}
             {tab === 'albums' && (
               <button className="btn primary small"
                       onClick={() => { setText(''); setDialog({ kind: 'newAlbum' }); }}>
@@ -155,6 +194,7 @@ function OwnerApp() {
 
         {tab === 'photos' && (
           <TimelineView
+            key={sort} order={sort}
             onOpen={(list, i) => setGlobalLb({ items: list, index: i })}
             selection={selection}
             onToggle={toggleIn(viewItems)}
@@ -164,6 +204,7 @@ function OwnerApp() {
 
         {tab === 'tags' && (
           <TagsView
+            order={sort}
             onOpen={(list, i) => setGlobalLb({ items: list, index: i })}
             selection={selection}
             onToggle={toggleIn(viewItems)}
@@ -243,6 +284,7 @@ function OwnerApp() {
         <h1>{open.title}</h1>
         <span className="muted">{open.n} items</span>
         <div className="push row-gap">
+          {items && items.length > 1 && sortButton}
           {items && items.length > 0 && (
             <button className="btn small" onClick={() =>
               setSelection((s) => s.size === items.length ? new Set() : new Set(items.map((i) => i.id)))}>
@@ -263,13 +305,13 @@ function OwnerApp() {
             <p className="muted">Drop photos above to fill this album.</p>
           </div>
         )
-        : <PhotoGrid items={items} onOpen={setLightbox}
+        : <PhotoGrid items={shown!} onOpen={setLightbox}
                      urlFor={(it, v) => assetUrl(it.id, v)}
                      selection={selection} onToggle={toggle} />}
 
-      {items && lightbox !== null && (
+      {shown && lightbox !== null && (
         <Lightbox
-          items={items}
+          items={shown}
           index={lightbox}
           onClose={() => setLightbox(null)}
           onIndex={setLightbox}

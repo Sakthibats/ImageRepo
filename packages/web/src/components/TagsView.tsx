@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { SortOrder } from '../tags.ts';
 import type { ManifestItem } from '@imagerepo/shared';
 import { assetUrl } from '../api.ts';
 import { tagsApi, type Item, type Tag } from '../tags.ts';
@@ -7,8 +8,9 @@ import { TagChip } from './TagChip.tsx';
 
 /** Browse and search by tag. Selecting several narrows (AND) by default. */
 export function TagsView({
-  onOpen, selection, onToggle, onItems,
+  order, onOpen, selection, onToggle, onItems,
 }: {
+  order: SortOrder;
   onOpen: (items: Item[], index: number) => void;
   selection: Set<string>;
   onToggle: (id: string, index: number, shiftKey: boolean) => void;
@@ -29,10 +31,15 @@ export function TagsView({
     if (!active.length) { setResults(null); onItems([]); return; }
     let live = true;
     void tagsApi.search(active, mode)
-      .then((d) => { if (live) { setResults(d.items); onItems(d.items); } })
+      .then((d) => {
+        if (!live) return;
+        // The search returns newest first.
+        const items = order === 'asc' ? [...d.items].reverse() : d.items;
+        setResults(items); onItems(items);
+      })
       .catch((e) => setError(e.message));
     return () => { live = false; };
-  }, [active, mode, onItems]);
+  }, [active, mode, order, onItems]);
 
   const toggleTag = (id: string) =>
     setActive((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);

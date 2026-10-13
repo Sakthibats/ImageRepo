@@ -1,37 +1,39 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ManifestItem } from '@imagerepo/shared';
 import { assetUrl } from '../api.ts';
-import { tagsApi, groupByMonth, type Item } from '../tags.ts';
+import { tagsApi, groupByMonth, type Item, type SortOrder } from '../tags.ts';
 import { PhotoGrid } from './PhotoGrid.tsx';
 
 /**
- * The whole library by date, newest first — the default way in.
+ * The whole library by date — the default way in.
  *
  * Pages are fetched on scroll rather than all at once: at 13k items a single
  * response would be megabytes of JSON parsed before anything renders.
  */
 export function TimelineView({
-  onOpen, selection, onToggle, onItems,
+  order, onOpen, selection, onToggle, onItems,
 }: {
+  /** Changing this starts over: the parent keys this component on it. */
+  order: SortOrder;
   onOpen: (items: Item[], index: number) => void;
   selection: Set<string>;
   onToggle: (id: string, index: number, shiftKey: boolean) => void;
   onItems: (items: Item[]) => void;
 }) {
   const [items, setItems] = useState<Item[]>([]);
-  const [next, setNext] = useState<number | null>(null);
+  const [next, setNext] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const sentinel = useRef<HTMLDivElement>(null);
   const loadingRef = useRef(false);
 
-  const loadPage = useCallback(async (before?: number) => {
+  const loadPage = useCallback(async (after?: string) => {
     if (loadingRef.current) return;
     loadingRef.current = true;
     try {
-      const page = await tagsApi.timeline(before);
+      const page = await tagsApi.timeline(order, after);
       setItems((prev) => {
-        const merged = before ? [...prev, ...page.items] : page.items;
+        const merged = after ? [...prev, ...page.items] : page.items;
         onItems(merged);
         return merged;
       });
@@ -39,7 +41,7 @@ export function TimelineView({
     } catch (e) { setError((e as Error).message); }
     setLoading(false);
     loadingRef.current = false;
-  }, [onItems]);
+  }, [onItems, order]);
 
   useEffect(() => { void loadPage(); }, [loadPage]);
 
@@ -59,7 +61,7 @@ export function TimelineView({
       <div className="empty fade-in">
         <div className="empty-art">🗓️</div>
         <h2>Nothing here yet</h2>
-        <p className="muted">Photos will appear here newest first, grouped by month.</p>
+        <p className="muted">Photos will appear here by date, grouped by month.</p>
       </div>
     );
   }
