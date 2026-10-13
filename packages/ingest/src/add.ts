@@ -137,7 +137,7 @@ export async function addFiles(
   }
   if (!found.files.length) {
     out('\n  no photos or videos found\n');
-    return { files: [], uploadedBytes: 0, counts: { added: 0, linked: 0, unchanged: 0, held: 0, removed: 0, failed: 0 } };
+    return { files: [], uploadedBytes: 0, counts: { added: 0, updated: 0, linked: 0, unchanged: 0, held: 0, removed: 0, failed: 0 } };
   }
 
   for (const f of found.files) state.upsert(f);
@@ -169,13 +169,20 @@ export async function addFiles(
     const tag = !known ? '' : known.has(id) ? 'existing album' : 'new album';
     out(`    ${a.title.padEnd(w)}  ${tag.padEnd(14)}  ${plural(a.photos, 'photo').padStart(12)}  ${plural(a.videos, 'video').padStart(10)}  ${fmtBytes(a.bytes).padStart(8)}`);
   }
-  out(`\n    ${todo.length.toLocaleString()} to add` + (upToDate ? ` · ${upToDate.toLocaleString()} already in your library` : ''));
+  // Already uploaded, but a processing step has been added or changed since.
+  const outdated = todo.filter((r) => r.hash && runs.get(r.hash)?.get('original')?.state === 'done');
+  const fresh = todo.length - outdated.length;
+  out('\n    ' + [
+    fresh || !todo.length ? `${fresh.toLocaleString()} to add` : '',
+    outdated.length ? `${outdated.length.toLocaleString()} to update (no re-upload)` : '',
+    upToDate ? `${upToDate.toLocaleString()} already in your library` : '',
+  ].filter(Boolean).join(' · '));
 
   if (!todo.length) { out('\n  everything here is already in your library\n'); }
-  else if (!dry) {
+  else if (!dry && fresh) {
     // Upload time dominates and depends on the connection, which we cannot
     // know in advance; a live estimate replaces this once the run starts.
-    const seconds = todo.reduce((n, r) => n + r.size, 0) / (20 * 1024 * 1024 / 8);
+    const seconds = todo.filter((r) => !outdated.includes(r)).reduce((n, r) => n + r.size, 0) / (20 * 1024 * 1024 / 8);
     out(`    upload: roughly ${fmtDur(seconds * 1000)} on a 20 Mbps connection, ${fmtDur(seconds * 200)} on 100 Mbps`);
   }
 
@@ -190,7 +197,7 @@ export async function addFiles(
       out('\n  not running in a terminal, so cannot ask — re-run with --yes to go ahead\n');
       return null;
     }
-    if (!(await confirm('\n  Add them? [Y/n] '))) { out('\n  nothing was uploaded\n'); return null; }
+    if (!(await confirm('\n  Go ahead? [Y/n] '))) { out('\n  nothing was uploaded\n'); return null; }
   }
   out('');
 
@@ -224,7 +231,7 @@ export async function addFiles(
   // The web app reads baked album files, so new photos are invisible until
   // the albums they landed in are baked again.
   const touched = [...new Set(result.files
-    .filter((f) => f.outcome === 'added' || f.outcome === 'linked').map((f) => f.album))];
+    .filter((f) => ['added', 'updated', 'linked'].includes(f.outcome)).map((f) => f.album))];
   let bakeError: string | undefined;
   if (!dry && api?.configured && touched.length) {
     try { for (const album of touched) await api.bake(album); }
@@ -236,6 +243,7 @@ export async function addFiles(
   out('');
   const line = (n: number, text: string) => { if (n) out(`    ${String(n).padStart(6)}  ${text}`); };
   line(c.added, dry ? 'would be added' : 'added');
+  line(c.updated, dry ? 'would be updated' : 'updated (already uploaded; newer processing applied)');
   line(c.linked, dry ? 'already uploaded — would be filed in the album' : 'already uploaded — filed in the album');
   line(c.unchanged, 'already in your library');
   line(c.held, 'uploaded but not yet recorded');
@@ -258,7 +266,7 @@ export async function addFiles(
     out(`\n  Uploaded, but the albums could not be refreshed (${bakeError}).`);
     out(`  Run "imagerepo bake" to make the new items appear.`);
   }
-  if (!dry && (c.added || c.linked) && !c.held && !bakeError && deps.siteUrl) {
+  if (!dry && (c.added || c.updated || c.linked) && !c.held && !bakeError && deps.siteUrl) {
     out(`\n  View them at ${deps.siteUrl}`);
   }
   out('');

@@ -185,7 +185,7 @@ program
     console.log(`\n  recording ${held.length} file(s)...`);
     const result = await runFiles(held, { state, storage: null, recorder: api, opts: {}, recordOnly: true });
     for (const album of used) await api.bake(album);
-    console.log(`  done — ${result.counts.added + result.counts.linked} recorded` +
+    console.log(`  done — ${result.counts.added + result.counts.updated + result.counts.linked} recorded` +
       (result.counts.held ? `, ${result.counts.held} still held` : '') + '\n');
     state.close();
   });
@@ -315,16 +315,19 @@ program
     const counts: Record<string, number> = {};
     const albums = new Map<string, number>();
     for (const f of files) {
-      const s = fileState(f, f.hash ? runs.get(f.hash) : undefined);
+      let s: string = fileState(f, f.hash ? runs.get(f.hash) : undefined);
+      // Uploaded already, but a processing step has been added or changed since.
+      if (s === 'pending' && f.hash && runs.get(f.hash)?.get('original')?.state === 'done') s = 'outdated';
       counts[s] = (counts[s] ?? 0) + 1;
       albums.set(f.albumTitle, (albums.get(f.albumTitle) ?? 0) + 1);
     }
     const label: Record<string, string> = {
       recorded: 'in your library', uploaded: 'uploaded, not yet recorded',
+      outdated: 'uploaded — a newer processing step is waiting ("imagerepo retry" runs it)',
       pending: 'not yet added', failed: 'failed',
     };
     console.log(`\n  ${files.length.toLocaleString()} files tracked — ${fmtBytes(files.reduce((n, f) => n + f.size, 0))}\n`);
-    for (const k of ['recorded', 'uploaded', 'pending', 'failed']) {
+    for (const k of ['recorded', 'uploaded', 'outdated', 'pending', 'failed']) {
       if (counts[k]) console.log(`    ${String(counts[k]).padStart(7)}  ${label[k]}`);
     }
     console.log('\n  albums:');

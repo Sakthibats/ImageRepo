@@ -19,6 +19,7 @@ export interface Recorder {
 
 /**
  *  added      processed, uploaded and recorded
+ *  updated    already in the library; a new or changed stage was run for it
  *  linked     the bytes were already uploaded; only the record was (re)sent,
  *             e.g. the same photo filed under another album
  *  unchanged  nothing to do
@@ -27,7 +28,7 @@ export interface Recorder {
  *             left alone unless `restore` is set
  *  failed     see `error`
  */
-export type Outcome = 'added' | 'linked' | 'unchanged' | 'held' | 'removed' | 'failed';
+export type Outcome = 'added' | 'updated' | 'linked' | 'unchanged' | 'held' | 'removed' | 'failed';
 
 export interface FileResult {
   path: string; album: string; outcome: Outcome; error?: string;
@@ -134,11 +135,13 @@ export async function runFiles(files: FileRow[], deps: RunDeps): Promise<RunResu
     return check;
   }
 
-  async function content(row: FileRow, hash: string): Promise<{ data: Record<string, unknown>; ran: boolean }> {
+  async function content(
+    row: FileRow, hash: string,
+  ): Promise<{ data: Record<string, unknown>; ran: 'all' | 'some' | 'none' }> {
     const shared = inflight.get(hash);
-    if (shared) return { data: await shared, ran: false };
+    if (shared) return { data: await shared, ran: 'none' };
 
-    let ran = false;
+    let ran: 'all' | 'some' | 'none' = 'none';
     const work = (async () => {
       const ext = extname(row.path).toLowerCase().slice(1);
       const data: Record<string, unknown> = {};
@@ -164,7 +167,9 @@ export async function runFiles(files: FileRow[], deps: RunDeps): Promise<RunResu
           continue;
         }
         if (deps.recordOnly) throw new StageError(stage.name, 'not processed yet');
-        ran = true;
+        // Running `original` means the bytes are going up for the first time.
+        if (stage.name === 'original') ran = 'all';
+        else if (ran === 'none') ran = 'some';
         try {
           data[stage.name] = await stage.run(input);
         } catch (e) {
@@ -200,7 +205,7 @@ export async function runFiles(files: FileRow[], deps: RunDeps): Promise<RunResu
       } else {
         const { data, ran } = await content(row, hash);
         toRecord.push({
-          row, key, outcome: ran ? 'added' : 'linked',
+          row, key, outcome: ran === 'all' ? 'added' : ran === 'some' ? 'updated' : 'linked',
           record: buildRecord({ ...row, hash }, data),
         });
       }
@@ -257,7 +262,7 @@ export async function runFiles(files: FileRow[], deps: RunDeps): Promise<RunResu
     }
   }
 
-  const counts: Record<Outcome, number> = { added: 0, linked: 0, unchanged: 0, held: 0, removed: 0, failed: 0 };
+  const counts: Record<Outcome, number> = { added: 0, updated: 0, linked: 0, unchanged: 0, held: 0, removed: 0, failed: 0 };
   for (const r of results) counts[r.outcome]++;
   return { files: results, uploadedBytes, counts };
 }

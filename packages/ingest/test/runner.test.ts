@@ -246,7 +246,7 @@ check('bumping a stage version makes its backlog', states(state).pending === pho
 const [looks2, sent2] = [bucket.looks, worker.records.length];
 const redo = await addFiles(await collect([lib]), { yes: true }, deps);
 const resent = worker.records.slice(sent2);
-check('only that stage re-runs', redo!.counts.added + redo!.counts.linked === photos && bucket.looks > looks2 &&
+check('only that stage re-runs', redo!.counts.updated + redo!.counts.linked === photos && redo!.counts.added === 0 && bucket.looks > looks2 &&
   !bucket.puts.slice(puts).some((k) => k.startsWith('orig/')), JSON.stringify(redo?.counts));
 check('videos are left alone', redo?.counts.unchanged === 1);
 check('records carry the new version', resent.length > 0 &&
