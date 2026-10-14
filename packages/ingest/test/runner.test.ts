@@ -239,7 +239,8 @@ fresh.close();
 console.log('\nChanging the pipeline\n');
 
 const derivatives = STAGES.photo.find((s) => s.name === 'derivatives')!;
-derivatives.version = 2;
+const baseVersion = derivatives.version;
+derivatives.version = baseVersion + 1;
 const photos = found.files.filter((f) => f.kind === 'photo').length;
 check('bumping a stage version makes its backlog', states(state).pending === photos, JSON.stringify(states(state)));
 
@@ -250,8 +251,8 @@ check('only that stage re-runs', redo!.counts.updated + redo!.counts.linked === 
   !bucket.puts.slice(puts).some((k) => k.startsWith('orig/')), JSON.stringify(redo?.counts));
 check('videos are left alone', redo?.counts.unchanged === 1);
 check('records carry the new version', resent.length > 0 &&
-  resent.every((r) => r.stages?.find((s) => s.name === 'derivatives')?.version === 2));
-derivatives.version = 1;
+  resent.every((r) => r.stages?.find((s) => s.name === 'derivatives')?.version === baseVersion + 1));
+derivatives.version = baseVersion;
 await addFiles(await collect([lib]), { yes: true }, deps);     // settle back at version 1
 
 // -------------------------------------------- deleted in the web app since
@@ -261,7 +262,7 @@ const gone = byName('beach.png');
 for (const k of [...bucket.objects.keys()]) if (k.includes(gone.id)) bucket.objects.delete(k);
 const exifStage = STAGES.photo.find((s) => s.name === 'exif')!;
 exifStage.version++;                       // any reason to re-process
-derivatives.version = 3;                   // ...including a stage that uploads
+derivatives.version = baseVersion + 2;     // ...including a stage that uploads
 const sentBefore = worker.records.length;
 const kept = await addFiles(await collect([lib]), { yes: true }, deps);
 check('a deleted item is not resurrected', kept?.counts.removed === 1 &&
@@ -282,7 +283,7 @@ const emptied = await addFiles(await collect([lib]), { yes: true }, deps);
 check('a deleted album is not re-created empty', emptied?.counts.removed === 1 && !worker.albums.has('holiday-pics'),
   JSON.stringify(emptied?.counts));
 exifStage.version -= 2;
-derivatives.version = 1;
+derivatives.version = baseVersion;
 state.close();
 
 // --------------------------------------------------------- old ledgers

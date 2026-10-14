@@ -37,7 +37,8 @@ export const photoOriginal: Stage<OriginalOut> = {
 /** Resized copies. sharp emits no metadata, so these are GPS-free by construction. */
 export const derivatives: Stage<DerivativesOut> = {
   name: 'derivatives',
-  version: 1,
+  // v2: correct width/height for photos the camera marked as rotated.
+  version: 2,
   async run({ path, hash, ext, bytes, put }) {
     const image = await decodableImage(path, ext, await bytes());
     const { width, height, thumbhash, derivatives } = await processPhoto(image);

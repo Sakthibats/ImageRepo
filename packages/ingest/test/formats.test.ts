@@ -99,5 +99,17 @@ if (!hasSips) {
   check('truncated HEIC is refused, not passed through', threw);
 }
 
+// --------------------------------------------------------- orientation
+console.log('\nRotated photos\n');
+
+// Stored landscape, but the camera says "turned 90°" — as cameras do for portrait shots.
+const turned = await sharp({ create: { width: 2400, height: 1600, channels: 3, background: '#888' } })
+  .jpeg().withMetadata({ orientation: 6 }).toBuffer();
+const upright = await processPhoto(turned);
+check('dimensions are as the photo is seen', upright.width === 1600 && upright.height === 2400,
+  `${upright.width}x${upright.height}`);
+const big = await sharp(upright.derivatives.at(-1)!.body).metadata();
+check('resized copies are upright', big.width === 1024 && big.height === 1536, `${big.width}x${big.height}`);
+
 console.log(`\n${failures === 0 ? 'all checks passed' : failures + ' FAILED'}\n`);
 process.exit(failures === 0 ? 0 : 1);
