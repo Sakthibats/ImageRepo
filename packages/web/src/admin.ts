@@ -63,8 +63,25 @@ export const adminApi = {
       body: blob,
     }),
 
-  commitUpload: (albumId: string, records: UploadRecord[]) =>
-    req<{ added: number }>('/admin/upload/commit', json('POST', { albumId, records })),
+  commitUpload: (albumId: string, records: UploadRecord[], folderId?: string) =>
+    req<{ added: number }>('/admin/upload/commit', json('POST', { albumId, records, folderId })),
+
+  folders: (albumId: string) =>
+    req<{ folders: { id: string; title: string; n: number }[] }>(`/admin/albums/${albumId}/folders`),
+
+  createFolder: (albumId: string, title: string) =>
+    req<{ id: string }>(`/admin/albums/${albumId}/folders`, json('POST', { title })),
+
+  /** `coverId: null` goes back to the folder's earliest photo. */
+  updateFolder: (albumId: string, folderId: string, patch: { title?: string; coverId?: string | null }) =>
+    req(`/admin/albums/${albumId}/folders/${folderId}`, json('PATCH', patch)),
+
+  deleteFolder: (albumId: string, folderId: string) =>
+    req(`/admin/albums/${albumId}/folders/${folderId}`, json('DELETE')),
+
+  /** Files media already in the album into a folder; `null` makes them loose. */
+  fileInFolder: (albumId: string, mediaIds: string[], folderId: string | null) =>
+    req<{ moved: number }>(`/admin/albums/${albumId}/folder-items`, json('POST', { mediaIds, folderId })),
 };
 
 export interface ShareRow {
@@ -77,6 +94,8 @@ export interface ShareRow {
 export interface PurgeSummary {
   photos: number; videos: number; bytes: number;
   albums: number; shares: number; tags: number; phrase: string;
+  /** False unless signed in through Access as a person. */
+  canPurge: boolean;
 }
 
 export interface UploadRecord {

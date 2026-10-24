@@ -73,7 +73,20 @@ export interface ManifestItem {
   th?: string;                // thumbhash
   d?: number;                 // durationMs, video only
   c?: string;                 // caption
+  f?: string;                 // folder id; absent = loose in the album
   // NOTE: no lat/lon/place here. Owner manifests add them via OwnerManifestItem.
+}
+
+/** A folder inside an album, as the app lists it. */
+export interface FolderSummary {
+  id: string;
+  title: string;
+  n: number;
+  /** The chosen cover, or the earliest photo in the folder. */
+  cover: string | null;
+  /** True when the owner picked the cover rather than it being worked out. */
+  coverPinned?: boolean;
+  newest: number | null;      // taken_at of the most recent item, for ordering
 }
 
 /** Owner-only manifest adds location. Never serialized for share links. */
@@ -89,4 +102,6 @@ export interface AlbumManifest {
   ver: string;
   count: number;
   items: ManifestItem[] | OwnerManifestItem[];
+  /** Most recent first. Absent from albums baked before folders existed. */
+  folders?: FolderSummary[];
 }

@@ -139,7 +139,7 @@ export function listAlbums(db: D1Database) {
 export function albumMedia(db: D1Database, albumId: string) {
   return db.prepare(`
     SELECT m.id, m.kind, m.width, m.height, m.taken_at, m.thumbhash,
-           m.duration_ms, m.caption, m.lat, m.lon, m.place
+           m.duration_ms, m.caption, m.lat, m.lon, m.place, am.folder_id
     FROM album_media am
     JOIN media m ON m.id = am.media_id
     WHERE am.album_id = ?1

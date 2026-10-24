@@ -29,17 +29,13 @@ const ROUNDS_PER_CALL = 5;
  */
 const TABLES = [
   'media_tags', 'tags', 'media_stages', 'ingest_log',
-  'share_links', 'album_media', 'albums', 'media',
+  'share_links', 'album_media', 'folders', 'albums', 'media',
 ];
 
-purge.use('*', async (c, next) => {
-  if (!(await accessUserEmail(c.req.raw, c.env))) {
-    return c.json({ error: 'purging needs you signed in through Cloudflare Access, in a browser' }, 403);
-  }
-  await next();
-});
-
-/** What a purge would remove, for the confirmation screen. */
+/**
+ * What a purge would remove, for the confirmation screen. Any owner may read
+ * it; `canPurge` says whether this caller could go on to purge.
+ */
 purge.get('/summary', async (c) => {
   const one = (sql: string) => c.env.DB.prepare(sql).first<{ n: number }>().then((r) => r?.n ?? 0);
   const [photos, videos, bytes, albums, shares, tags] = await Promise.all([
@@ -50,7 +46,8 @@ purge.get('/summary', async (c) => {
     one(`SELECT COUNT(*) AS n FROM share_links WHERE revoked = 0`),
     one(`SELECT COUNT(*) AS n FROM tags`),
   ]);
-  return c.json({ photos, videos, bytes, albums, shares, tags, phrase: PURGE_PHRASE });
+  const canPurge = Boolean(await accessUserEmail(c.req.raw, c.env));
+  return c.json({ photos, videos, bytes, albums, shares, tags, phrase: PURGE_PHRASE, canPurge });
 });
 
 /**
@@ -62,6 +59,9 @@ purge.get('/summary', async (c) => {
  * nothing but unreferenced bytes, and running it again finishes the job.
  */
 purge.post('/everything', async (c) => {
+  if (!(await accessUserEmail(c.req.raw, c.env))) {
+    return c.json({ error: 'purging needs you signed in through Cloudflare Access, in a browser' }, 403);
+  }
   const b = await c.req.json<{ confirm?: string; resume?: boolean }>()
     .catch(() => ({} as { confirm?: string; resume?: boolean }));
   if (b.confirm !== PURGE_PHRASE) {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { OwnerManifestItem } from '@imagerepo/shared';
+import type { FolderSummary, OwnerManifestItem } from '@imagerepo/shared';
 import { fetchIndex, fetchAlbum, assetUrl, type AlbumSummary } from './api.ts';
 import { adminApi } from './admin.ts';
 import { PhotoGrid } from './components/PhotoGrid.tsx';
@@ -12,6 +12,7 @@ import { TimelineView } from './components/TimelineView.tsx';
 import { TagsView } from './components/TagsView.tsx';
 import { TagDialog } from './components/TagDialog.tsx';
 import { SettingsView } from './components/SettingsView.tsx';
+import { FolderStrip, itemsIn, type FolderView } from './components/FolderStrip.tsx';
 import { shareTokenFromPath } from './share.ts';
 import { loadSort, saveSort, type Item, type SortOrder } from './tags.ts';
 
@@ -55,7 +56,10 @@ type Dialog =
   | { kind: 'newAlbum' }
   | { kind: 'renameAlbum'; album: AlbumSummary }
   | { kind: 'confirmDeleteMedia'; ids: string[] }
-  | { kind: 'confirmDeleteAlbum'; album: AlbumSummary };
+  | { kind: 'confirmDeleteAlbum'; album: AlbumSummary }
+  | { kind: 'newFolder'; fileIds: string[] }
+  | { kind: 'renameFolder'; folder: FolderSummary }
+  | { kind: 'confirmDeleteFolder'; folder: FolderSummary };
 
 function OwnerApp() {
   // Dates are the default way in; albums and tags are alternative lenses on
@@ -68,6 +72,8 @@ function OwnerApp() {
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<AlbumSummary | null>(null);
   const [items, setItems] = useState<OwnerManifestItem[] | null>(null);
+  const [folders, setFolders] = useState<FolderSummary[]>([]);
+  const [view, setView] = useState<FolderView>('all');
   const [lightbox, setLightbox] = useState<number | null>(null);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [lastClicked, setLastClicked] = useState<number | null>(null);
@@ -94,12 +100,17 @@ function OwnerApp() {
   useEffect(() => { void loadIndex(); }, [loadIndex]);
 
   const reloadAlbum = useCallback(async (album: AlbumSummary | null) => {
-    if (!album?.ver) { setItems(album ? [] : null); return; }
-    try { setItems((await fetchAlbum(album.id, album.ver)).items); }
-    catch (e) { setError((e as Error).message); }
+    if (!album?.ver) { setItems(album ? [] : null); setFolders([]); return; }
+    try {
+      const m = await fetchAlbum(album.id, album.ver);
+      setItems(m.items);
+      setFolders(m.folders ?? []);
+    } catch (e) { setError((e as Error).message); }
   }, []);
 
   useEffect(() => { setSelection(new Set()); void reloadAlbum(open); }, [open, reloadAlbum]);
+  // A different album starts on All photos; a refresh of the same one stays put.
+  useEffect(() => { setView('all'); }, [open?.id]);
 
   /** Refresh both the index and the open album after a mutation. */
   const refresh = useCallback(async () => {
@@ -126,9 +137,18 @@ function OwnerApp() {
       setLastClicked(index);
     }, [lastClicked]);
 
+  // A folder deleted from under the view falls back to All photos.
+  const folder = folders.find((f) => f.id === view) ?? null;
+  const activeView: FolderView = view === 'all' || view === 'loose' || folder ? view : 'all';
+  const inView = useMemo(() => (items ? itemsIn(items, activeView) : null), [items, activeView]);
+
   // An album's manifest is baked oldest first; the other order is its mirror.
   const shown = useMemo(
-    () => (items && sort === 'desc' ? [...items].reverse() : items), [items, sort]);
+    () => (inView && sort === 'desc' ? [...inView].reverse() : inView), [inView, sort]);
+
+  const changeView = (v: FolderView) => {
+    setView(v); setSelection(new Set()); setLastClicked(null); setLightbox(null);
+  };
 
   const toggle = useCallback((id: string, index: number, shiftKey: boolean) =>
     toggleIn(shown ?? [])(id, index, shiftKey), [toggleIn, shown]);
@@ -182,7 +202,7 @@ function OwnerApp() {
     return (
       <main>
         <header className="head" ref={headRef}>
-          <h1>Photos</h1>
+          <h1>{tab === 'settings' ? 'Settings' : 'Photos'}</h1>
           {tabs}
           <div className="push row-gap">
             {(tab === 'photos' || tab === 'tags') && sortButton}
@@ -296,25 +316,71 @@ function OwnerApp() {
         <h1>{open.title}</h1>
         <span className="muted">{open.n} items</span>
         <div className="push row-gap">
-          {items && items.length > 1 && sortButton}
-          {items && items.length > 0 && (
+          {inView && inView.length > 1 && sortButton}
+          {inView && inView.length > 0 && (
             <button className="btn small" onClick={() =>
-              setSelection((s) => s.size === items.length ? new Set() : new Set(items.map((i) => i.id)))}>
-              {selection.size === items.length ? 'Clear' : 'Select all'}
+              setSelection((s) => s.size === inView.length ? new Set() : new Set(inView.map((i) => i.id)))}>
+              {selection.size === inView.length ? 'Clear' : 'Select all'}
             </button>
           )}
+          <button className="btn small" onClick={() => { setText(''); setDialog({ kind: 'newFolder', fileIds: [] }); }}>
+            New folder
+          </button>
           <button className="btn small" onClick={() => setDialog({ kind: 'share', album: open })}>Share</button>
         </div>
       </header>
 
-      <Uploader albumId={open.id} onDone={() => { void refresh(); notify('Upload complete'); }} />
+      <Uploader albumId={open.id} folder={folder ?? undefined}
+                onDone={() => { void refresh(); notify('Upload complete'); }} />
 
-      {!items ? <p className="muted center">Loading…</p>
+      {items && (
+        <FolderStrip
+          folders={folders} total={items.length} loose={items.filter((i) => !i.f).length}
+          view={activeView} onView={changeView}
+          coverUrl={(id) => assetUrl(id, '320')} allCover={open.cover}
+        />
+      )}
+
+      {folder && (
+        <div className="folder-bar fade-in">
+          <h2>{folder.title}</h2>
+          <span className="muted small">{folder.n === 1 ? '1 item' : `${folder.n} items`}</span>
+          <div className="push row-gap">
+            {folder.coverPinned && (
+              <button className="btn small" title="Go back to the earliest photo as this folder's cover"
+                      onClick={() => void act(
+                        () => adminApi.updateFolder(open.id, folder.id, { coverId: null }), 'Cover reset')}>
+                Reset cover
+              </button>
+            )}
+            <button className="btn small"
+                    onClick={() => { setText(folder.title); setDialog({ kind: 'renameFolder', folder }); }}>
+              Rename
+            </button>
+            <button className="btn small danger" onClick={() => setDialog({ kind: 'confirmDeleteFolder', folder })}>
+              Delete folder
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!items || !inView ? <p className="muted center">Loading…</p>
         : !items.length ? (
           <div className="empty fade-in">
             <div className="empty-art">📷</div>
             <h2>Nothing here yet</h2>
             <p className="muted">Drop photos above to fill this album.</p>
+          </div>
+        )
+        : !inView.length ? (
+          <div className="empty fade-in">
+            <div className="empty-art">🗂</div>
+            <h2>{activeView === 'loose' ? 'Every photo is in a folder' : 'This folder is empty'}</h2>
+            <p className="muted">
+              {activeView === 'loose'
+                ? 'Photos added from the CLI arrive here, outside any folder.'
+                : 'Drop photos above, or open All photos, select some, and use Move to folder.'}
+            </p>
           </div>
         )
         : <PhotoGrid items={shown!} onOpen={setLightbox}
@@ -335,6 +401,8 @@ function OwnerApp() {
         count={selection.size}
         albums={albums}
         currentAlbum={open.id}
+        folders={folders}
+        view={activeView}
         onClear={() => setSelection(new Set())}
         onMove={(to) => void act(
           () => adminApi.addToAlbum(to, selectedIds, 'move', open.id),
@@ -345,8 +413,17 @@ function OwnerApp() {
         onRemove={() => void act(
           () => adminApi.removeFromAlbum(open.id, selectedIds),
           `Removed ${selectedIds.length} from this album`)}
-        onSetCover={() => void act(
-          () => adminApi.updateAlbum(open.id, { coverId: selectedIds[0] }), 'Cover updated')}
+        onSetCover={(target) => void act(
+          () => target === 'album'
+            ? adminApi.updateAlbum(open.id, { coverId: selectedIds[0] })
+            : adminApi.updateFolder(open.id, target, { coverId: selectedIds[0] }),
+          target === 'album' ? 'Album cover updated'
+            : `Cover of “${folders.find((f) => f.id === target)?.title}” updated`)}
+        onFile={(folderId) => void act(
+          () => adminApi.fileInFolder(open.id, selectedIds, folderId),
+          folderId ? `Moved ${selectedIds.length} to “${folders.find((f) => f.id === folderId)?.title}”`
+            : `Moved ${selectedIds.length} out of folders`)}
+        onNewFolder={() => { setText(''); setDialog({ kind: 'newFolder', fileIds: selectedIds }); }}
         onDelete={() => setDialog({ kind: 'confirmDeleteMedia', ids: selectedIds })}
         onTag={() => setTagOpen(true)}
       />
@@ -424,6 +501,54 @@ function OwnerApp() {
         />
       );
     }
+    if ((dialog.kind === 'newFolder' || dialog.kind === 'renameFolder') && open) {
+      const renaming = dialog.kind === 'renameFolder';
+      const fileIds = dialog.kind === 'newFolder' ? dialog.fileIds : [];
+      const albumId = open.id;
+      return (
+        <Confirm
+          title={renaming ? 'Rename folder' : fileIds.length ? `New folder for ${fileIds.length} item${fileIds.length === 1 ? '' : 's'}` : 'New folder'}
+          confirmLabel={renaming ? 'Rename' : 'Create'}
+          body={
+            <input className="input" autoFocus value={text} placeholder="Folder name"
+                   onChange={(e) => setText(e.target.value)} />
+          }
+          onCancel={() => setDialog({ kind: 'none' })}
+          onConfirm={() => {
+            const title = text.trim();
+            setDialog({ kind: 'none' });
+            if (!title) return;
+            void act(async () => {
+              if (renaming) return adminApi.updateFolder(albumId, (dialog as { folder: FolderSummary }).folder.id, { title });
+              const made = await adminApi.createFolder(albumId, title);
+              if (fileIds.length) await adminApi.fileInFolder(albumId, fileIds, made.id);
+            }, renaming ? 'Folder renamed'
+              : fileIds.length ? `Moved ${fileIds.length} to “${title}”` : `Created “${title}”`);
+          }}
+        />
+      );
+    }
+    if (dialog.kind === 'confirmDeleteFolder' && open) {
+      const f = dialog.folder;
+      const albumId = open.id;
+      return (
+        <Confirm
+          title={`Delete folder “${f.title}”?`}
+          danger
+          confirmLabel="Delete folder"
+          body={<p className="muted">
+            The folder goes away. Its {f.n === 1 ? 'photo stays' : `${f.n} photos stay`} in
+            the album, loose.
+          </p>}
+          onCancel={() => setDialog({ kind: 'none' })}
+          onConfirm={() => {
+            setDialog({ kind: 'none' });
+            changeView('all');
+            void act(() => adminApi.deleteFolder(albumId, f.id), `Deleted folder “${f.title}”`);
+          }}
+        />
+      );
+    }
     if (dialog.kind === 'confirmDeleteMedia') {
       const n = dialog.ids.length;
       return (
@@ -454,10 +579,10 @@ function OwnerApp() {
           body={<>
             <p className="muted">
               {alsoMedia
-                ? <>The album and its share links go away, and its photos are
+                ? <>The album, its folders and share links go away, and its photos are
                     deleted from storage for good. Photos that are also in another
                     album are kept.</>
-                : <>The album and its share links go away. The {album.n} photos
+                : <>The album, its folders and share links go away. The {album.n} photos
                     stay in your library and in any other album they belong to.</>}
             </p>
             <label className="field check">

@@ -31,7 +31,9 @@ console.log('\npurge everything\n');
 
   const summary = await w.call('GET', '/admin/purge/summary', { auth: person });
   check('summary counts the library', summary.json.photos === 1230 && summary.json.albums === 2 &&
-    summary.json.shares === 1 && summary.json.tags === 1, JSON.stringify(summary.json));
+    summary.json.shares === 1 && summary.json.tags === 1 && summary.json.canPurge === true, JSON.stringify(summary.json));
+  const cliSummary = await w.call('GET', '/admin/purge/summary', { auth: cli });
+  check('the CLI can read the summary but is told it cannot purge', cliSummary.status === 200 && cliSummary.json.canPurge === false);
 
   let calls = 0;
   w.bucket.calls = 0;

@@ -1,7 +1,12 @@
 import { useCallback, useRef, useState } from 'react';
 import { uploadFiles, type Progress } from '../upload.ts';
 
-export function Uploader({ albumId, onDone }: { albumId: string; onDone: () => void }) {
+export function Uploader({ albumId, folder, onDone }: {
+  albumId: string;
+  /** The folder being viewed, which dropped photos go into. */
+  folder?: { id: string; title: string };
+  onDone: () => void;
+}) {
   const [dragging, setDragging] = useState(false);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [result, setResult] = useState<string | null>(null);
@@ -15,7 +20,7 @@ export function Uploader({ albumId, onDone }: { albumId: string; onDone: () => v
       return;
     }
     setResult(null);
-    const r = await uploadFiles(images, albumId, setProgress);
+    const r = await uploadFiles(images, albumId, setProgress, folder?.id);
     setProgress(null);
     const parts = [`${r.added} added`];
     if (r.skipped) parts.push(`${r.skipped} already present`);
@@ -23,7 +28,7 @@ export function Uploader({ albumId, onDone }: { albumId: string; onDone: () => v
     if (r.failed.length) parts.push(`${r.failed.length} failed`);
     setResult(parts.join(' · '));
     onDone();
-  }, [albumId, onDone]);
+  }, [albumId, folder?.id, onDone]);
 
   return (
     <div
@@ -52,7 +57,9 @@ export function Uploader({ albumId, onDone }: { albumId: string; onDone: () => v
         </>
       ) : (
         <>
-          <div className="drop-title">Drop photos here, or click to choose</div>
+          <div className="drop-title">
+            Drop photos here, or click to choose{folder ? ` — they go into “${folder.title}”` : ''}
+          </div>
           <div className="muted small">
             {result ?? 'Resized in your browser before upload · video goes through the CLI'}
           </div>

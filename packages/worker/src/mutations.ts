@@ -151,6 +151,123 @@ mutations.delete('/albums/:id', async (c) => {
   return c.json({ ok: true, deletedAlbum: id, deletedMedia: removedMedia });
 });
 
+// ----------------------------------------------------------------- folders
+// One level inside an album. A folder is only a label on album_media rows,
+// so creating, renaming and filling one touches D1 and the baked manifest;
+// no object in R2 moves.
+
+const FOLDER_ID = /^[0-9a-f]{12}$/;
+const newFolderId = () => crypto.randomUUID().replace(/-/g, '').slice(0, 12);
+
+async function folderOf(env: Env, albumId: string, folderId: string) {
+  if (!FOLDER_ID.test(folderId)) return null;
+  return env.DB.prepare('SELECT id, title FROM folders WHERE id = ?1 AND album_id = ?2')
+    .bind(folderId, albumId).first<{ id: string; title: string }>();
+}
+
+/** A folder title already used in this album, ignoring case. */
+async function folderClash(env: Env, albumId: string, title: string, except = '') {
+  return env.DB.prepare(
+    'SELECT title FROM folders WHERE album_id = ?1 AND LOWER(title) = LOWER(?2) AND id <> ?3 LIMIT 1'
+  ).bind(albumId, title, except).first<{ title: string }>();
+}
+
+/** The album's folders with counts. The CLI and the share dialog list these. */
+mutations.get('/albums/:id/folders', async (c) => {
+  const { results } = await c.env.DB.prepare(`
+    SELECT f.id, f.title, COUNT(am.media_id) AS n
+    FROM folders f LEFT JOIN album_media am ON am.folder_id = f.id AND am.album_id = f.album_id
+    WHERE f.album_id = ?1
+    GROUP BY f.id ORDER BY f.title
+  `).bind(c.req.param('id')).all();
+  return c.json({ folders: results });
+});
+
+mutations.post('/albums/:id/folders', async (c) => {
+  const albumId = c.req.param('id');
+  const b = await body<{ title?: string }>(c);
+  const title = (b.title ?? '').trim().slice(0, 120);
+  if (!title) return c.json({ error: 'title required' }, 400);
+
+  const album = await c.env.DB.prepare('SELECT id FROM albums WHERE id = ?1').bind(albumId).first();
+  if (!album) return c.json({ error: 'no such album' }, 404);
+  const clash = await folderClash(c.env, albumId, title);
+  if (clash) return c.json({ error: `a folder named "${clash.title}" already exists in this album` }, 409);
+
+  const id = newFolderId();
+  await c.env.DB.prepare(
+    'INSERT INTO folders (id, album_id, title, created_at) VALUES (?1, ?2, ?3, ?4)'
+  ).bind(id, albumId, title, now()).run();
+  await rebake(c.env, [albumId]);
+  return c.json({ ok: true, id, title });
+});
+
+/** Rename, or set the cover. `coverId: null` goes back to the earliest photo. */
+mutations.patch('/albums/:id/folders/:fid', async (c) => {
+  const albumId = c.req.param('id');
+  const folder = await folderOf(c.env, albumId, c.req.param('fid'));
+  if (!folder) return c.json({ error: 'no such folder' }, 404);
+  const b = await body<{ title?: string; coverId?: string | null }>(c);
+
+  const title = b.title?.trim().slice(0, 120) || null;
+  if (title) {
+    const clash = await folderClash(c.env, albumId, title, folder.id);
+    if (clash) return c.json({ error: `a folder named "${clash.title}" already exists in this album` }, 409);
+  }
+  if (b.coverId) {
+    // Any photo in the album will do, not only the folder's own.
+    const inAlbum = await c.env.DB.prepare(
+      'SELECT 1 FROM album_media WHERE album_id = ?1 AND media_id = ?2'
+    ).bind(albumId, b.coverId).first();
+    if (!inAlbum) return c.json({ error: 'cover must be a photo in this album' }, 400);
+  }
+
+  await c.env.DB.prepare(`
+    UPDATE folders SET
+      title    = COALESCE(?2, title),
+      cover_id = CASE WHEN ?3 = 1 THEN ?4 ELSE cover_id END
+    WHERE id = ?1
+  `).bind(folder.id, title, b.coverId === undefined ? 0 : 1, b.coverId ?? null).run();
+  await rebake(c.env, [albumId]);
+  return c.json({ ok: true });
+});
+
+/** Deletes a folder. Its photos stay in the album, loose. */
+mutations.delete('/albums/:id/folders/:fid', async (c) => {
+  const albumId = c.req.param('id');
+  const folder = await folderOf(c.env, albumId, c.req.param('fid'));
+  if (!folder) return c.json({ error: 'no such folder' }, 404);
+  // album_media.folder_id is ON DELETE SET NULL.
+  await c.env.DB.prepare('DELETE FROM folders WHERE id = ?1').bind(folder.id).run();
+  await rebake(c.env, [albumId]);
+  return c.json({ ok: true, deleted: folder.id });
+});
+
+/** Files photos already in the album into a folder, or back out (`folderId: null`). */
+mutations.post('/albums/:id/folder-items', async (c) => {
+  const albumId = c.req.param('id');
+  const b = await body<{ mediaIds?: string[]; folderId?: string | null }>(c);
+  const ids = (b.mediaIds ?? []).filter((x) => /^[0-9a-f]{32}$/.test(x));
+  if (!ids.length) return c.json({ error: 'mediaIds required' }, 400);
+
+  let folderId: string | null = null;
+  if (b.folderId) {
+    const folder = await folderOf(c.env, albumId, b.folderId);
+    if (!folder) return c.json({ error: 'no such folder in this album' }, 404);
+    folderId = folder.id;
+  }
+
+  // ?1 and ?2 are taken, so each chunk's ids start at ?3.
+  const results = await c.env.DB.batch(chunks(ids).map((part) => c.env.DB.prepare(`
+    UPDATE album_media SET folder_id = ?1
+    WHERE album_id = ?2 AND media_id IN (${part.map((_, i) => `?${i + 3}`).join(',')})
+  `).bind(folderId, albumId, ...part)));
+  const moved = results.reduce((n, r) => n + (r.meta.changes ?? 0), 0);
+
+  await rebake(c.env, [albumId]);
+  return c.json({ ok: true, moved, folderId });
+});
+
 // ------------------------------------------------------------------- media
 
 mutations.post('/albums/:id/media', async (c) => {

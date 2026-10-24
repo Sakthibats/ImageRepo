@@ -98,7 +98,14 @@ export function SettingsView({ onPurged }: { onPurged: () => void }) {
           </div>
         )}
 
-        {phase.kind !== 'running' && phase.kind !== 'failed' && !error && (
+        {summary && !summary.canPurge && phase.kind === 'idle' && (
+          <p className="err">
+            Purging is only possible when you are signed in through Cloudflare Access
+            in a browser, on the hostname Access protects.
+          </p>
+        )}
+
+        {phase.kind !== 'running' && phase.kind !== 'failed' && summary?.canPurge && (
           <div className="purge-confirm">
             <label className="field">
               <span>Type <code>{phrase}</code> to confirm</span>

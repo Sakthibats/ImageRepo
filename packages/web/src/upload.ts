@@ -22,6 +22,8 @@ export async function uploadFiles(
   files: File[],
   albumId: string,
   onProgress: (p: Progress) => void,
+  /** Files them in this folder of the album; otherwise they arrive loose. */
+  folderId?: string,
 ): Promise<{ added: number; skipped: number; failed: string[] }> {
   const records: UploadRecord[] = [];
   const failed: string[] = [];
@@ -73,7 +75,7 @@ export async function uploadFiles(
 
   if (records.length) {
     onProgress({ file: '', done, total: files.length, phase: 'saving' });
-    await adminApi.commitUpload(albumId, records);
+    await adminApi.commitUpload(albumId, records, folderId);
   }
   return { added: records.length, skipped, failed };
 }

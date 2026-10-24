@@ -1,5 +1,5 @@
 import { r2Key } from '@imagerepo/shared';
-import type { AlbumManifest, ManifestItem, OwnerManifestItem } from '@imagerepo/shared';
+import type { AlbumManifest, FolderSummary, ManifestItem, OwnerManifestItem } from '@imagerepo/shared';
 import { albumMedia, listAlbums } from './db.js';
 
 /**
@@ -35,6 +35,7 @@ function toGuestItem(row: any): ManifestItem {
   if (row.thumbhash) item.th = row.thumbhash;
   if (row.duration_ms) item.d = row.duration_ms;
   if (row.caption) item.c = row.caption;
+  if (row.folder_id) item.f = row.folder_id;
   return item;
 }
 
@@ -44,6 +45,46 @@ function toOwnerItem(row: any): OwnerManifestItem {
   if (row.lon != null) item.lon = row.lon;
   if (row.place) item.place = row.place;
   return item;
+}
+
+export interface FolderRow { id: string; title: string; cover_id: string | null }
+export interface MemberRow { id: string; kind: string; taken_at: number | null; folder_id: string | null }
+
+/**
+ * Folder summaries for an album, most recent first, counting only `items`
+ * (oldest first, as albums are baked). A guest's list is built from what
+ * that guest can see, so a pinned cover outside it falls back to the earliest
+ * photo they can see rather than pointing at something they cannot load.
+ */
+export function summariseFolders(folders: FolderRow[], items: MemberRow[]): FolderSummary[] {
+  const visible = new Set(items.map((i) => i.id));
+  const members = new Map<string, MemberRow[]>();
+  for (const it of items) {
+    if (!it.folder_id) continue;
+    const list = members.get(it.folder_id) ?? [];
+    list.push(it);
+    members.set(it.folder_id, list);
+  }
+
+  const out = folders.map((f): FolderSummary => {
+    const own = members.get(f.id) ?? [];
+    // A pinned cover may be any photo in the album, not only this folder's.
+    const pinned = f.cover_id && visible.has(f.cover_id) ? f.cover_id : null;
+    // Prefer a photo, as album covers do: a video poster is a frame grab.
+    const earliest = (own.find((m) => m.kind === 'photo') ?? own[0])?.id ?? null;
+    const newest = own.reduce((n, m) => Math.max(n, m.taken_at ?? 0), 0);
+    return {
+      id: f.id, title: f.title, n: own.length,
+      cover: pinned ?? earliest, ...(pinned ? { coverPinned: true } : {}),
+      newest: newest || null,
+    };
+  });
+
+  // An empty folder is usually one just made to be filled, so it leads.
+  return out.sort((a, b) =>
+    Number(a.n > 0) - Number(b.n > 0) ||
+    (b.newest ?? 0) - (a.newest ?? 0) ||
+    a.title.localeCompare(b.title));
 }
 
 /** Short random version token; changing it busts every cached copy at once. */
@@ -61,11 +102,15 @@ export async function bakeAlbum(
   if (!album) throw new Error(`no such album: ${albumId}`);
 
   const { results } = await albumMedia(db, albumId);
+  const { results: folderRows } = await db.prepare(
+    `SELECT id, title, cover_id FROM folders WHERE album_id = ?1`
+  ).bind(albumId).all<FolderRow>();
   const ver = newVersion();
 
-  const write = async (audience: Audience, items: ManifestItem[]) => {
+  const write = async (audience: Audience, items: ManifestItem[], folders?: FolderSummary[]) => {
     const body: AlbumManifest = {
       album: album.id, title: album.title, ver, count: items.length, items,
+      ...(folders ? { folders } : {}),
     };
     await bucket.put(manifestKey(albumId, audience, ver), JSON.stringify(body), {
       httpMetadata: {
@@ -76,7 +121,10 @@ export async function bakeAlbum(
     });
   };
 
-  await write('owner', (results as any[]).map(toOwnerItem));
+  // Guests are served a manifest built per share link (guest.ts), which
+  // carries only the folders that link includes; this baked one has none.
+  await write('owner', (results as any[]).map(toOwnerItem),
+    summariseFolders(folderRows, results as unknown as MemberRow[]));
   await write('guest', (results as any[]).map(toGuestItem));
 
   // Give a new album a cover so the album list is not a wall of blank tiles.

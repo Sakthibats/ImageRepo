@@ -1,20 +1,33 @@
 import { useState } from 'react';
+import type { FolderSummary } from '@imagerepo/shared';
 import type { AlbumSummary } from '../api.ts';
+import type { FolderView } from './FolderStrip.tsx';
+
+const LOOSE = '__loose';
+const NEW = '__new';
 
 /** Floating action bar. Appears only when something is selected. */
 export function AdminBar({
-  count, albums, currentAlbum, onClear, onMove, onCopy, onRemove, onDelete, onSetCover, onTag,
+  count, albums, currentAlbum, folders, view,
+  onClear, onMove, onCopy, onRemove, onDelete, onSetCover, onTag, onFile, onNewFolder,
 }: {
   count: number;
   albums: AlbumSummary[];
   currentAlbum: string;
+  folders: FolderSummary[];
+  view: FolderView;
   onClear: () => void;
   onMove: (to: string) => void;
   onCopy: (to: string) => void;
   onRemove: () => void;
   onDelete: () => void;
-  onSetCover: () => void;
+  /** 'album', or the id of the folder whose cover this becomes. */
+  onSetCover: (target: string) => void;
   onTag: () => void;
+  /** Into a folder of this album, or loose with null. */
+  onFile: (folderId: string | null) => void;
+  /** Make a folder, then file the selection in it. */
+  onNewFolder: () => void;
 }) {
   const [target, setTarget] = useState('');
   if (!count) return null;
@@ -35,7 +48,32 @@ export function AdminBar({
       <button className="btn small" disabled={!target} onClick={() => { onCopy(target); setTarget(''); }}>Copy</button>
 
       <span className="ab-sep" />
-      {count === 1 && <button className="btn small" onClick={onSetCover}>Set as cover</button>}
+      <select className="input slim" value="" aria-label="Move to folder"
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === NEW) onNewFolder();
+                else if (v === LOOSE) onFile(null);
+                else if (v) onFile(v);
+              }}>
+        <option value="">Move to folder…</option>
+        {folders.length > 0 && view !== 'loose' && <option value={LOOSE}>Loose (no folder)</option>}
+        {folders.filter((f) => f.id !== view).map((f) => <option key={f.id} value={f.id}>{f.title}</option>)}
+        <option value={NEW}>New folder…</option>
+      </select>
+
+      <span className="ab-sep" />
+      {count === 1 && !folders.length && (
+        <button className="btn small" onClick={() => onSetCover('album')}>Set as cover</button>
+      )}
+      {count === 1 && folders.length > 0 && (
+        // Any photo in the album can be a folder's cover, not only its own.
+        <select className="input slim" value="" aria-label="Set as cover"
+                onChange={(e) => { if (e.target.value) onSetCover(e.target.value); }}>
+          <option value="">Set as cover…</option>
+          <option value="album">Album cover</option>
+          {folders.map((f) => <option key={f.id} value={f.id}>Cover of “{f.title}”</option>)}
+        </select>
+      )}
       <button className="btn small" onClick={onRemove}>Remove from album</button>
       <button className="btn small danger" onClick={onDelete}>Delete…</button>
       <button className="icon-btn" onClick={onClear} aria-label="Clear selection">×</button>

@@ -58,6 +58,8 @@ upload.put('/:id/:variant', async (c) => {
 upload.post('/commit', async (c) => {
   const b = await c.req.json<{
     albumId?: string;
+    /** The folder being viewed when the files were dropped. */
+    folderId?: string;
     records?: Array<{
       id: string; width: number; height: number; bytes: number;
       takenAt?: number; thumbhash?: string; origName: string;
@@ -72,6 +74,14 @@ upload.post('/commit', async (c) => {
   const album = await c.env.DB.prepare('SELECT id FROM albums WHERE id = ?1').bind(albumId).first();
   if (!album) return c.json({ error: 'no such album' }, 404);
 
+  let folderId: string | null = null;
+  if (b.folderId) {
+    const folder = await c.env.DB.prepare('SELECT id FROM folders WHERE id = ?1 AND album_id = ?2')
+      .bind(b.folderId, albumId).first<{ id: string }>();
+    if (!folder) return c.json({ error: 'no such folder in this album' }, 404);
+    folderId = folder.id;
+  }
+
   const ts = Math.floor(Date.now() / 1000);
   const media = c.env.DB.prepare(`
     INSERT INTO media (id, kind, ext, drv_ext, bytes, width, height, taken_at,
@@ -80,8 +90,9 @@ upload.post('/commit', async (c) => {
     ON CONFLICT(id) DO UPDATE SET
       width = excluded.width, height = excluded.height, thumbhash = excluded.thumbhash
   `);
+  // A photo already in the album keeps the folder it is in.
   const link = c.env.DB.prepare(`
-    INSERT INTO album_media (album_id, media_id, position) VALUES (?1, ?2, ?3)
+    INSERT INTO album_media (album_id, media_id, position, folder_id) VALUES (?1, ?2, ?3, ?4)
     ON CONFLICT(album_id, media_id) DO NOTHING
   `);
 
@@ -92,7 +103,7 @@ upload.post('/commit', async (c) => {
       r.id, r.drvExt ?? 'webp', r.bytes, r.width, r.height,
       r.takenAt ?? ts, ts, r.thumbhash ?? null, r.origName ?? r.id,
     ));
-    stmts.push(link.bind(albumId, r.id, r.takenAt ?? ts));
+    stmts.push(link.bind(albumId, r.id, r.takenAt ?? ts, folderId));
   }
   if (!stmts.length) return c.json({ error: 'no valid records' }, 400);
   await c.env.DB.batch(stmts);

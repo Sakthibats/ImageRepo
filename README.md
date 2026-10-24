@@ -90,7 +90,8 @@ found and which albums are new, asks before uploading, then shows progress and
 a summary. When it finishes the photos are visible in the web app.
 
 - **Albums.** A folder's subfolders become albums, and photos sitting directly
-  in the folder go to an album named after it. A single file goes to an album
+  in the folder go to an album named after it. Photos always arrive loose in the
+  album, outside any of its folders; you sort them into folders in the web app. A single file goes to an album
   named after its parent folder. `--album` puts everything in one album, matching
   an existing album by name. `--album-depth` changes how many folder levels form
   the name.
@@ -159,6 +160,14 @@ Open the Worker's hostname and sign in through Access.
   items between them.
 - **Tags** lets you tag selected items and browse or search by tag.
 - Inside an album you can drop photos to upload them from the browser.
+- **Folders.** An album can hold one level of folders. **New folder** makes one;
+  select photos and use **Move to folder…** to file them, or back out to
+  **Loose (no folder)**. The strip above the grid switches between **All
+  photos** (every folder combined, by date), **Loose photos**, and each folder.
+  Folders are listed most recent first. A folder's cover is its earliest photo
+  unless you choose another (**Set as cover…** on any photo in the album).
+  Moving photos between folders only changes the database; nothing in R2 is
+  copied or moved. Photos dropped while a folder is open go into it.
 - Deleting an album keeps its photos unless you tick **Also delete its photos**.
   Photos that are also in another album are kept either way.
 - **Settings** (the gear) shows what the library holds, and has **Purge
@@ -241,7 +250,10 @@ npm run -w @imagerepo/worker test
 ```
 
 - `packages/worker/test/purge.test.ts`: purge, album and media deletion, and
-  manifest cleanup. They run against the real Hono app in Node, with D1 as
+  manifest cleanup.
+- `packages/worker/test/folders.test.ts`: folder create/rename/delete, moving
+  photos in and out, covers, ordering, and that a re-sent CLI record keeps its
+  folder. They run against the real Hono app in Node, with D1 as
   in-memory SQLite (schema plus every migration), R2 as a map, and Access JWTs
   signed by a key the test makes (`test/harness.ts`).
 
