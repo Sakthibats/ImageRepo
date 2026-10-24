@@ -8,6 +8,261 @@ A private photo and video library on Cloudflare R2 + D1, with revocable share li
   removed from every original the CLI uploads (JPEG, PNG, HEIC and video) without
   touching a pixel, and never written into anything a guest receives.
 
+## How it works
+
+### The big picture
+
+```mermaid
+flowchart LR
+  subgraph laptop["Your laptop"]
+    CLI["imagerepo CLI<br/>hash, strip GPS, resize"]
+    Ledger[("Local ledger<br/>.ingest/state.db")]
+  end
+
+  Owner["You, in a browser"]
+  Guest["Someone with<br/>a share link"]
+
+  subgraph cf["Cloudflare"]
+    Access{{"Cloudflare Access<br/>login wall"}}
+    Worker["Worker<br/>API + web app"]
+    D1[("D1 database<br/>what is known about<br/>each photo")]
+    R2[("R2 storage<br/>the files themselves")]
+  end
+
+  CLI <--> Ledger
+  CLI -- "photo files, directly" --> R2
+  CLI -- "metadata (service token)" --> Access
+  Owner -- "signs in" --> Access
+  Guest -- "/s/... links skip the login" --> Access
+  Access --> Worker
+  Worker --> D1
+  Worker --> R2
+```
+
+Three ideas hold the design together:
+
+1. **Files and facts are stored apart.** R2 holds bytes: originals, resized
+   copies, video posters. D1 holds everything known about them: dates, camera,
+   location, albums, folders, tags and share links.
+2. **Only the Worker writes to D1.** The CLI uploads files straight to R2, which
+   is fast and avoids Worker request-size limits, then tells the Worker what it
+   uploaded.
+3. **Album pages read pre-built files.** When an album changes, the Worker
+   *bakes* it into a JSON file in R2. Opening an album reads that file, not the
+   database, so it is fast and cacheable.
+
+### Who can reach what
+
+One Worker serves the web app and three groups of routes. Access sits in front
+of all of it; only share links are let through without a login.
+
+```mermaid
+flowchart LR
+  you["You (browser)<br/>Access login"] --> a["/a/*<br/>read the library"]
+  you --> admin["/admin/*<br/>change the library"]
+  you --> purge["/admin/purge<br/>wipe everything"]
+  cli["CLI<br/>service token + ADMIN_TOKEN"] --> admin
+  guest["Guest<br/>share token in the URL"] --> s["/s/:token<br/>one album, only what<br/>the link shares"]
+```
+
+| Caller | Gets past Access with | The Worker then checks | Can use |
+|---|---|---|---|
+| You, in a browser | your Access login | the Access JWT's signature | `/a`, `/admin`, the web app, purge |
+| The CLI | an Access service token | the `ADMIN_TOKEN` bearer | `/admin`, except purge |
+| A guest | nothing (`/s` bypasses Access) | share token, passcode, signed session cookie, a tag per image, and the link's folder scope | `/s/:token` only |
+
+Purging needs a person: a JWT that carries an email. Neither the CLI's token
+nor its service token can wipe the library.
+
+### Where data lives
+
+**R2** keys are built from the file's content hash: the first 32 hex characters
+of its SHA-256. The same file always gets the same key, so a duplicate is
+uploaded once, a key's content never changes, and browsers can cache it forever.
+
+| Key | What |
+|---|---|
+| `orig/<id>.<ext>` | the original, with GPS removed |
+| `drv/<id>/320.avif`, `1024`, `2048` | resized copies for the grid, tablets and the lightbox (WebP for browser uploads) |
+| `post/<id>.jpg` | a video's poster frame |
+| `prev/<id>.mp4` | a 720p preview, only for videos browsers cannot play as they are |
+| `man/album/<album>.owner.<ver>.json` | a baked album: items, dates, folders (current and previous version kept) |
+| `man/index.owner.current.json` | the list of albums, pointing at each album's current version |
+
+**D1** holds the relationships:
+
+```mermaid
+erDiagram
+  albums ||--o{ album_media : holds
+  media ||--o{ album_media : "filed as"
+  albums ||--o{ folders : has
+  folders |o--o{ album_media : groups
+  albums ||--o{ share_links : "shared by"
+  share_links ||--o{ share_folders : "limited to"
+  folders ||--o{ share_folders : "chosen in"
+  media ||--o{ media_tags : "tagged"
+  tags ||--o{ media_tags : "applied as"
+  media ||--o{ media_stages : "processed by"
+
+  media {
+    text id PK "content hash"
+    text kind "photo or video"
+    int taken_at
+    real lat "owner only"
+    real lon "owner only"
+    text raw_meta "all camera metadata, owner only"
+  }
+  album_media {
+    text album_id FK
+    text media_id FK
+    text folder_id FK "null means loose"
+  }
+  share_links {
+    text token_hash PK "sha256 of the link token"
+    text scope "all or folders"
+    int include_loose
+  }
+```
+
+- A photo can be in several albums. Within one album it is in at most one
+  folder, or loose. Folders are one level deep.
+- Moving a photo between folders changes one `album_media` row. Nothing in R2
+  moves.
+- `settings.library_epoch` changes when the library is purged (see below).
+
+### Adding photos from the laptop
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant CLI as imagerepo add
+  participant L as Local ledger
+  participant R2
+  participant W as Worker
+  participant D1
+
+  CLI->>CLI: scan folders into albums, hash every file
+  CLI->>L: which steps has this hash already done?
+  loop each file, only the missing steps
+    CLI->>CLI: exif: read dates, camera, GPS
+    CLI->>R2: original: strip GPS losslessly, upload orig/
+    CLI->>R2: derivatives: resize to 320/1024/2048, upload drv/
+    CLI->>L: save each step's result
+  end
+  CLI->>W: POST /admin/ingest, records in batches (GPS included)
+  W->>D1: media, album membership (loose), steps done
+  CLI->>W: POST /admin/bake for each album touched
+  W->>R2: new album manifest and index
+```
+
+- Processing is a list of **stages**, each with a version. Photos run
+  `exif → original → derivatives`; videos run
+  `probe → original → poster → preview`. A file is done when every stage has a
+  result at its current version. Adding a stage, or bumping a version, turns
+  the existing library into a backlog that the next `add` or `retry` works
+  through.
+- The ledger records each stage as it finishes, so a run that is interrupted
+  resumes where it stopped.
+- GPS goes to D1 only. A file type the CLI cannot strip is refused, never
+  uploaded as it is.
+
+### Viewing the library
+
+```mermaid
+sequenceDiagram
+  participant B as Your browser
+  participant W as Worker
+  participant R2
+  participant D1
+
+  B->>W: GET /a/manifest/index
+  W->>R2: man/index.owner.current.json
+  W-->>B: albums, each with its current version
+  B->>W: GET /a/manifest/album/goa/<ver>
+  W->>R2: man/album/goa.owner.<ver>.json
+  W-->>B: items and folders (cached forever: the version is in the name)
+  B->>W: GET /a/<id>/1024
+  W->>D1: which kind and format is <id>?
+  W->>R2: drv/<id>/1024.avif
+  W-->>B: image (cached forever)
+```
+
+An edit, such as a rename, a folder move or a cover change, writes to D1 and
+re-bakes the album under a new version. The index then points at the new
+version, so the next load sees the change. The **Photos** timeline and **Tags**
+are queried from D1 directly, since only you read them.
+
+### Sharing
+
+A link shows either the whole album or chosen folders:
+
+```mermaid
+flowchart LR
+  subgraph album["Album: Kerala 2024"]
+    M["Munnar"]
+    K["Kochi"]
+    A["Alleppey"]
+    Lo["Loose photos"]
+  end
+  all["Link: Everything<br/>(also folders added later)"] --> M & K & A & Lo
+  mum["Link: for mum<br/>(Munnar + Kochi)"] --> M & K
+```
+
+What happens when a guest opens a link:
+
+```mermaid
+sequenceDiagram
+  participant G as Guest browser
+  participant W as Worker
+  participant D1
+  participant R2
+
+  G->>W: GET /s/<token>
+  W-->>G: the app (no login: Access lets /s through)
+  G->>W: POST /s/<token>/session (and passcode, if set)
+  W->>D1: find sha256(token): revoked? expired? what does it share?
+  W->>D1: items and folder names within that scope, without location
+  W-->>G: list, a signed tag per item, and a 12-hour session cookie
+  G->>W: GET /s/<token>/a/<id>/1024?t=<tag>
+  W->>W: check the cookie and the tag
+  W->>D1: is the link still live, and the item still shared?
+  W->>R2: drv/<id>/1024.avif
+  W-->>G: image
+```
+
+- Only the SHA-256 of a link's token is stored, so a copy of the database
+  contains no working link.
+- Tags change every hour, so every viewer of a link requests the same URLs
+  and shares cached copies.
+- Each image request is also checked against the link in D1. Revoking a link, or
+  taking a folder out of it, takes effect at once.
+- Guests never receive location fields, or the names of folders outside their
+  link.
+
+### Purging and the CLI's memory
+
+```mermaid
+flowchart LR
+  P["Settings: Purge everything<br/>(browser login only)"] --> D["Empty every D1 table<br/>and set a new library epoch"]
+  D --> R["Delete R2 objects<br/>a few thousand per request,<br/>repeated until none are left"]
+  R --> I["Write an empty index"]
+  I -. "next imagerepo add" .-> C["The CLI sees the new epoch<br/>and clears its ledger,<br/>so everything uploads again"]
+```
+
+D1 is emptied first. If a purge stops partway, the only thing left is files
+that nothing refers to, and running it again removes them.
+
+### How a deploy runs
+
+```mermaid
+flowchart LR
+  a["Typecheck<br/>and tests"] --> b["New D1 migrations<br/>(asks first)"] --> c["Build the<br/>web app"] --> d["wrangler deploy"] --> e["Smoke test"]
+```
+
+Migrations run before the new Worker and only ever add things, so the old
+Worker keeps working while they apply. See [Deploying](#deploying) for the
+command.
+
 ## Layout
 
 ```
@@ -18,17 +273,8 @@ packages/
   web/       React + Vite app, built to dist/ and served by the Worker
 schema.sql   D1 schema
 migrations/  D1 changes applied after schema.sql
+scripts/     deploy.mts, behind `npm run deploy`
 ```
-
-One Worker serves both the API and the web app, so the Cloudflare Access cookie
-covers both. Its routes:
-
-| Path | Who | What |
-|---|---|---|
-| `/admin/*` | owner | ingest, uploads, album/media/tag writes, share-link management |
-| `/a/*` | owner | manifests, media, timeline, tags, search |
-| `/s/:token` | guests | one shared album, no login |
-| everything else | owner | the web app |
 
 ## Setup
 
