@@ -102,8 +102,8 @@ npm run deploy                   # migrations, web build, Worker deploy, smoke t
 
 ## Current state (25 October 2026)
 
-- Branch `cli-stages`, 2 commits ahead of `origin/cli-stages` (docs only),
-  not merged to `main`. Production runs `c002223`; migrations 001–009
+- Branch `cli-stages`, with unpushed commits (including the deployed
+  `c002223`), not merged to `main`. Production runs `c002223`; migrations 001–009
   applied. R2 CORS and the `inbox/` lifecycle rule are set.
 - The CLI is gone, and so are its routes and D1 tables (`ingest_log`,
   `settings`). Every remaining table is in use.
