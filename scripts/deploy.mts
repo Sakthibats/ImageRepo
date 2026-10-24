@@ -191,14 +191,31 @@ const url = deployed.out.match(/https:\/\/[^\s]+\.workers\.dev/)?.[0];
 if (!url) {
   note('No workers.dev URL in the deploy output; skipped.');
 } else {
-  const app = await fetch(`${url}/`).then((r) => r.text().then((t) => ({ status: r.status, t })), () => null);
-  const api = await fetch(`${url}/admin/health`).then((r) => r.status, () => 0);
-  const appOk = app?.status === 200 && /<div id="root"/.test(app.t);
-  // No credentials sent: the Worker answering 401 proves the new code is up and still locked.
-  const apiOk = api === 401;
-  note(`${appOk ? 'ok  ' : red('FAIL')}  ${url}/ serves the app`);
-  note(`${apiOk ? 'ok  ' : red('FAIL')}  /admin refuses a request with no credentials (${api})`);
-  if (!appOk || !apiOk) die('Deployed, but the smoke test failed. Check with: (cd packages/worker && npx wrangler tail)');
+  // Redirects are not followed: Access answers a request without a login with
+  // a 302 to its sign-in page, and following it would look like a 200.
+  const get = (path: string, init: RequestInit = {}) =>
+    fetch(`${url}${path}`, { redirect: 'manual', ...init })
+      .then(async (r) => ({ status: r.status, location: r.headers.get('location') ?? '', body: await r.text() }))
+      .catch(() => ({ status: 0, location: '', body: '' }));
+  const toAccess = (r: { status: number; location: string }) =>
+    r.status >= 300 && r.status < 400 && /\.cloudflareaccess\.com\//.test(r.location);
+
+  // Share links bypass Access, so /s/ reaches the new Worker directly: the app
+  // shell, then a made-up token refused by a lookup in D1.
+  const fake = 'smoketest' + 'x'.repeat(24);
+  const shell = await get(`/s/${fake}`);
+  const session = await get(`/s/${fake}/session`, { method: 'POST' });
+  const admin = await get('/admin/health');
+
+  const appOk = shell.status === 200 && /<div id="root"/.test(shell.body);
+  const dbOk = session.status === 404 && /invalid or expired link/.test(session.body);
+  // Locked either by Access (a login redirect) or by the Worker itself (401).
+  const apiOk = admin.status === 401 || toAccess(admin);
+  note(`${appOk ? 'ok  ' : red('FAIL')}  the app shell is served (${shell.status})`);
+  note(`${dbOk ? 'ok  ' : red('FAIL')}  the Worker answers from D1: a made-up share link is refused (${session.status})`);
+  note(`${apiOk ? 'ok  ' : red('FAIL')}  /admin with no credentials is ${toAccess(admin) ? 'sent to the Access login' : `refused (${admin.status})`}`);
+  const allOk = appOk && dbOk && apiOk;
+  if (!allOk) die('Deployed, but the smoke test failed. Check with: (cd packages/worker && npx wrangler tail)');
 }
 
 console.log(`\n  ${bold('Deployed.')}\n`);

@@ -91,8 +91,9 @@ npm run migrate:local           # apply new migrations to the local dev database
    runs once. Migrations go before the Worker and are additive, so the running
    Worker keeps working in between.
 4. Builds the web app and deploys the Worker.
-5. Checks the deployed app loads and `/admin` refuses a request with no
-   credentials.
+5. Checks the deployed Worker: the app shell loads, a made-up share link is
+   refused (so D1 answers), and `/admin` without credentials is refused or sent
+   to the Access login.
 
 Migrations used to be applied by hand, which leaves no record. The first run
 recognises those already in the database by what they created, lists them, and
