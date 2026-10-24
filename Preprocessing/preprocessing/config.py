@@ -53,7 +53,9 @@ def load() -> Config:
     if missing:
         raise ConfigError(f'missing settings: {", ".join(missing)} (see env.example)')
     env = os.environ
-    kinds = tuple(k.strip() for k in env.get('KINDS', 'photo').split(',') if k.strip())
+    kinds = tuple(k.strip() for k in env.get('KINDS', 'photo,video').split(',') if k.strip())
+    if not kinds or set(kinds) - {'photo', 'video'}:
+        raise ConfigError('KINDS takes photo, video, or photo,video')
     return Config(
         worker_url=env['WORKER_URL'].rstrip('/'),
         access_client_id=env['CF_ACCESS_CLIENT_ID'],

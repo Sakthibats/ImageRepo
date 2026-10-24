@@ -19,6 +19,10 @@ log = logging.getLogger('preprocessing')
 
 # The Worker takes at most 20 records per /complete.
 RECORDS_PER_CALL = 20
+# A claim is a lease: if this machine dies, the file goes back in the queue
+# when it lapses. A long video transcode must finish well inside its lease.
+PHOTO_LEASE = 15 * 60
+VIDEO_LEASE = 4 * 3600
 
 
 def content_id(path: Path) -> str:
@@ -42,6 +46,7 @@ class Runner:
         tmp = Path(tempfile.mkdtemp(prefix='imagerepo-'))
         try:
             path = tmp / f'upload.{item["ext"]}'
+            (tmp / 'work').mkdir()
             self.r2.download(item['key'], path)
             # The id came from the browser. Bytes that do not match it must
             # never be written under it: R2 keys are immutable.
@@ -51,8 +56,8 @@ class Runner:
 
             job = Job(
                 id=item['id'], kind=item['kind'], ext=item['ext'], orig_name=item['origName'],
-                last_modified=item.get('lastModified'), path=path, put=self.r2.put,
-                photo_tz=self.cfg.photo_tz,
+                last_modified=item.get('lastModified'), path=path, work=tmp / 'work',
+                put=self.r2.put, put_file=self.r2.put_file, photo_tz=self.cfg.photo_tz,
             )
             data: dict[str, Any] = {}
             for stage in stages:
@@ -67,6 +72,9 @@ class Runner:
         # A couple more claimed than running, so a thread that frees up starts
         # on the next download at once.
         target = self.cfg.concurrency + 2
+        # ffmpeg uses several cores for one video, so few run at once, and
+        # photos keep moving alongside them.
+        video_slots = max(1, self.cfg.concurrency // 4)
         inflight: dict[Future, dict] = {}
         records: list[dict] = []
         failures: list[dict] = []
@@ -77,7 +85,15 @@ class Runner:
         with ThreadPoolExecutor(self.cfg.concurrency, thread_name_prefix='stage') as pool:
             while True:
                 if not stop.is_set() and len(inflight) < target and time.monotonic() >= next_claim:
-                    items = self.api.claim(target - len(inflight), self.cfg.kinds)
+                    # Videos first, up to their few slots, so a long run of
+                    # photos never leaves them waiting until it ends.
+                    items = []
+                    videos = sum(1 for it in inflight.values() if it['kind'] == 'video')
+                    if 'video' in self.cfg.kinds and videos < video_slots:
+                        items += self.api.claim(video_slots - videos, ('video',), VIDEO_LEASE)
+                    room = target - len(inflight) - len(items)
+                    if 'photo' in self.cfg.kinds and room > 0:
+                        items += self.api.claim(room, ('photo',), PHOTO_LEASE)
                     for item in items:
                         log.info('claimed %s (%s, %s)', item['origName'], item['kind'], human(item['bytes']))
                         inflight[pool.submit(self.process, item)] = item

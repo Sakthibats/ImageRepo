@@ -7,16 +7,21 @@ Worker, checks its bytes against its id, and runs the stages:
 | Kind  | Stages                                        | Writes to R2                     |
 |-------|-----------------------------------------------|----------------------------------|
 | photo | `exif` → `original` → `derivatives`           | `orig/{id}.{ext}`, `drv/{id}/{320,1024,2048}.avif` |
-| video | (coming next) `probe` → `original` → `poster` → `preview` | `orig/`, `post/`, `prev/` |
+| video | `probe` → `original` → `poster` → `preview` | `orig/{id}.mp4`, `post/{id}.jpg`, `drv/` from the poster, `prev/{id}.mp4` for HEVC |
 
 Then it sends the record to the Worker, which files it in the album (and
 folder) it was dropped into, re-bakes the album and deletes the inbox copy.
 Records go in batches of up to 20, at least every 5 seconds, so photos appear
 while a large upload is still being worked through.
 
-Location stays out of R2: `exif` reads GPS for D1 before anything else, the
-original is stripped losslessly (`strip/`), and derivatives are written with
-no metadata at all.
+Location stays out of R2: `exif` and `probe` read GPS for D1 before anything
+else, a photo is stripped losslessly (`strip/`), a video is remuxed with every
+tag dropped (streams copied, never re-encoded), and derivatives are written
+with no metadata at all.
+
+Videos need ffmpeg (`brew install ffmpeg`; the Docker image has it). Only a
+few run at once, a quarter of `CONCURRENCY`, so photos keep moving alongside
+a long transcode. On a Mac the HEVC preview uses VideoToolbox.
 
 ## Run it
 

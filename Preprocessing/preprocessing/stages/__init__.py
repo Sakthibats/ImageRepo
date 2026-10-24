@@ -18,7 +18,9 @@ class Job:
     orig_name: str
     last_modified: int | None
     path: Path                     # the file as uploaded, metadata intact; never put in R2 as-is
+    work: Path                     # scratch space for this job's outputs, removed afterwards
     put: Callable[[str, bytes, str], None]
+    put_file: Callable[[str, Path, str], None]      # large outputs, streamed from disk
     photo_tz: str
 
 
@@ -37,8 +39,9 @@ class PermanentError(Exception):
 
 
 from .photo import Exif, Original, Derivatives  # noqa: E402
+from .video import Probe, VideoOriginal, Poster, Preview  # noqa: E402
 
 STAGES: dict[str, list[Stage]] = {
     'photo': [Exif(), Original(), Derivatives()],
-    'video': [],                   # step 3: probe, original, poster, preview
+    'video': [Probe(), VideoOriginal(), Poster(), Preview()],
 }

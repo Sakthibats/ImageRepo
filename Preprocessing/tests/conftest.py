@@ -2,12 +2,16 @@
 import io
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 
 import pillow_heif
 import pytest
 from PIL import Image, ImageCms
 from PIL.TiffImagePlugin import IFDRational as R
+
+from preprocessing.config import Config
+from preprocessing.runner import Runner, content_id
 
 pillow_heif.register_heif_opener()
 
@@ -81,3 +85,60 @@ def run_js(*args: str) -> bytes:
 def decode(data: bytes) -> bytes:
     with Image.open(io.BytesIO(data)) as im:
         return im.convert('RGBA').tobytes()
+
+
+# ------------------------------------------------------------- the runner
+
+class FakeR2:
+    def __init__(self):
+        self.objects: dict[str, bytes] = {}
+
+    def download(self, key, path):
+        path.write_bytes(self.objects[key])
+
+    def put(self, key, body, content_type):
+        self.objects[key] = body
+
+    def put_file(self, key, path, content_type):
+        self.objects[key] = path.read_bytes()
+
+
+class FakeApi:
+    def __init__(self, items):
+        self.queue = list(items)
+        self.completed: list[dict] = []
+        self.failed: list[dict] = []
+        self.claims: list[tuple] = []
+
+    def claim(self, limit, kinds, lease_seconds=900):
+        self.claims.append((limit, kinds, lease_seconds))
+        taken = [i for i in self.queue if i['kind'] in kinds][:limit]
+        self.queue = [i for i in self.queue if i not in taken]
+        return taken
+
+    def complete(self, records):
+        assert len(records) <= 20
+        self.completed += records
+        return {'recorded': len(records), 'skipped': []}
+
+    def fail(self, items):
+        self.failed += items
+
+
+CFG = Config(worker_url='http://worker', access_client_id='x', access_client_secret='y',
+             r2_account_id='a', r2_access_key_id='k', r2_secret_access_key='s', r2_bucket='b',
+             runner='test', concurrency=2, kinds=('photo', 'video'), photo_tz='UTC',
+             poll_seconds=0, flush_seconds=0)
+
+
+def upload(r2: FakeR2, path, kind='photo', id=None, name=None):
+    data = path.read_bytes()
+    id = id or content_id(path)
+    ext = path.suffix[1:].lower()
+    r2.objects[f'inbox/{id}.{ext}'] = data
+    return {'id': id, 'kind': kind, 'ext': ext, 'bytes': len(data), 'key': f'inbox/{id}.{ext}',
+            'origName': name or path.name, 'lastModified': 1_600_000_000, 'albumId': 'trip', 'attempts': 0}
+
+
+def run(api, r2):
+    return Runner(CFG, api, r2).run(threading.Event(), once=True)

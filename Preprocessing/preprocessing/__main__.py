@@ -66,6 +66,10 @@ def doctor(cfg, api, r2) -> int:
         line('worker', False, str(e))
     status = r2.check()
     line('r2', status.startswith('ok'), status)
+    from . import video
+    if 'video' in cfg.kinds:
+        line('video', video.available(), ('ffmpeg found' + (', with VideoToolbox' if video.has_videotoolbox() else ''))
+             if video.available() else 'ffmpeg and ffprobe are needed for KINDS=video')
     heif = pillow_heif.libheif_info()
     line('images', bool(heif['decoders']), f'libvips {pyvips.version(0)}.{pyvips.version(1)}, '
                                            f'HEIC via {", ".join(heif["decoders"]) or "nothing"}')

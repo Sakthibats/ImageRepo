@@ -40,6 +40,11 @@ class R2:
         self.s3.put_object(Bucket=self.bucket, Key=key, Body=body,
                            ContentType=content_type, CacheControl=CACHE_FOREVER)
 
+    def put_file(self, key: str, path: Path, content_type: str) -> None:
+        """Streams from disk, in parts above 64MB."""
+        self.s3.upload_file(str(path), self.bucket, key, Config=TRANSFER,
+                            ExtraArgs={'ContentType': content_type, 'CacheControl': CACHE_FOREVER})
+
     def check(self) -> str:
         """Proves the keys can list the bucket; used by `doctor`."""
         try:
