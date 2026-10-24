@@ -82,6 +82,11 @@ export class IngestState {
         updated_at INTEGER,
         PRIMARY KEY (hash, stage)
       );
+
+      CREATE TABLE IF NOT EXISTS meta (
+        key   TEXT PRIMARY KEY,
+        value TEXT
+      );
     `);
     // Columns added since the first ledgers were written.
     const cols = this.db.prepare(`PRAGMA table_info(files)`).all() as { name: string }[];
@@ -188,6 +193,22 @@ export class IngestState {
   }
 
   transaction(fn: () => void) { this.db.transaction(fn)(); }
+
+  // ------------------------------------------------------------------ meta
+
+  getMeta(key: string): string | null {
+    const row = this.db.prepare(`SELECT value FROM meta WHERE key=?`).get(key) as { value: string } | undefined;
+    return row?.value ?? null;
+  }
+  setMeta(key: string, value: string) {
+    this.db.prepare(`INSERT INTO meta (key, value) VALUES (?, ?)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(key, value);
+  }
+
+  /** Forgets every file and stage result. Meta, such as the epoch, is kept. */
+  reset() {
+    this.transaction(() => { this.db.exec(`DELETE FROM files; DELETE FROM stage_runs;`); });
+  }
 
   // ---------------------------------------------------------------- totals
 

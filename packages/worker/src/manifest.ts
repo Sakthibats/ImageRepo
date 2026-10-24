@@ -56,8 +56,8 @@ export async function bakeAlbum(
   bucket: R2Bucket,
   albumId: string,
 ): Promise<{ ver: string; count: number }> {
-  const album = await db.prepare(`SELECT id, title FROM albums WHERE id = ?1`)
-    .bind(albumId).first<{ id: string; title: string }>();
+  const album = await db.prepare(`SELECT id, title, manifest_ver FROM albums WHERE id = ?1`)
+    .bind(albumId).first<{ id: string; title: string; manifest_ver: string | null }>();
   if (!album) throw new Error(`no such album: ${albumId}`);
 
   const { results } = await albumMedia(db, albumId);
@@ -92,7 +92,56 @@ export async function bakeAlbum(
   await db.prepare(`UPDATE albums SET manifest_ver = ?1, updated_at = ?2 WHERE id = ?3`)
     .bind(ver, Math.floor(Date.now() / 1000), albumId).run();
 
+  // The previous version stays: a page that read the index just before this
+  // bake is about to ask for it.
+  await pruneManifests(bucket, albumId, [ver, album.manifest_ver]);
+
   return { ver, count: results.length };
+}
+
+/**
+ * Deletes an album's manifests other than the versions in `keep`. Without
+ * this every edit leaves another copy behind for good, and owner copies carry
+ * location.
+ */
+export async function pruneManifests(
+  bucket: R2Bucket, albumId: string, keep: (string | null)[] = [],
+): Promise<number> {
+  const prefix = `man/album/${albumId}.`;
+  const doomed: string[] = [];
+  await eachKey(bucket, prefix, (key) => {
+    // "<audience>.<ver>.json", or "<ver>.json" from before the audience split.
+    const parts = key.slice(prefix.length).split('.');
+    if (!keep.includes(parts[parts.length - 2])) doomed.push(key);
+  });
+  await deleteKeys(bucket, doomed);
+  return doomed.length;
+}
+
+/** Deletes the manifests of albums that no longer exist. */
+export async function sweepManifests(bucket: R2Bucket, liveAlbumIds: string[]): Promise<number> {
+  const live = new Set(liveAlbumIds);
+  const doomed: string[] = [];
+  // Album ids are slugs, which never contain a dot.
+  await eachKey(bucket, 'man/album/', (key) => {
+    if (!live.has(key.slice('man/album/'.length).split('.')[0])) doomed.push(key);
+  });
+  await deleteKeys(bucket, doomed);
+  return doomed.length;
+}
+
+async function eachKey(bucket: R2Bucket, prefix: string, fn: (key: string) => void) {
+  let cursor: string | undefined;
+  do {
+    const page = await bucket.list({ prefix, cursor, limit: 1000 });
+    for (const o of page.objects) fn(o.key);
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+}
+
+/** R2 deletes at most 1000 keys per call. */
+export async function deleteKeys(bucket: R2Bucket, keys: string[]) {
+  for (let i = 0; i < keys.length; i += 1000) await bucket.delete(keys.slice(i, i + 1000));
 }
 
 /**

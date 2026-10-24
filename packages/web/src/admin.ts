@@ -48,6 +48,12 @@ export const adminApi = {
   revokeShare: (tokenHash: string) =>
     req(`/admin/shares/${tokenHash}/revoke`, json('POST')),
 
+  purgeSummary: () => req<PurgeSummary>('/admin/purge/summary'),
+
+  /** One step of a purge; call with resume until `done`. */
+  purgeStep: (confirm: string, resume: boolean) =>
+    req<{ deleted: number; done: boolean }>('/admin/purge/everything', json('POST', { confirm, resume })),
+
   checkKnown: (ids: string[]) =>
     req<{ known: string[] }>('/admin/upload/check', json('POST', { ids })),
 
@@ -66,6 +72,11 @@ export interface ShareRow {
   created_at: number; expires_at: number | null; allow_download: number;
   revoked: number; view_count: number; last_seen_at: number | null;
   has_passcode: number;
+}
+
+export interface PurgeSummary {
+  photos: number; videos: number; bytes: number;
+  albums: number; shares: number; tags: number; phrase: string;
 }
 
 export interface UploadRecord {

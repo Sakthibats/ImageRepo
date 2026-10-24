@@ -9,7 +9,7 @@
   "scripts": {
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx test/strip.test.ts && tsx test/formats.test.ts && tsx test/video.test.ts && tsx test/runner.test.ts"
+    "test": "tsx test/epoch.test.ts && tsx test/strip.test.ts && tsx test/formats.test.ts && tsx test/video.test.ts && tsx test/runner.test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.700.0",

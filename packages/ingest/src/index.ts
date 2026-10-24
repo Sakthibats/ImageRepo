@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { basename } from 'node:path';
 import { loadConfig, type Config } from './config.js';
 import { scanLibrary, summarise } from './scan.js';
-import { openLedger, fileState, failureOf } from './ledger.js';
+import { openLedger, fileState, failureOf, syncEpoch, EPOCH_RESET_NOTE } from './ledger.js';
 import { R2 } from './r2.js';
 import { AdminApi } from './api.js';
 import { addFiles, collect, resolveAlbum, fmtBytes, fmtDur, type AddOptions } from './add.js';
@@ -27,7 +27,7 @@ function fail(message: string): never {
  * Checks everything an upload needs before any work starts, so the first
  * problem is reported in the first second rather than after an hour.
  */
-async function connect(): Promise<{ cfg: Config; r2: R2; api: AdminApi }> {
+async function connect(): Promise<{ cfg: Config; r2: R2; api: AdminApi; epoch: string | null }> {
   let cfg: Config;
   try { cfg = loadConfig(); }
   catch (e: any) { fail(e.message); }
@@ -37,11 +37,13 @@ async function connect(): Promise<{ cfg: Config; r2: R2; api: AdminApi }> {
   if (!chk.ok) fail(`Can't reach your storage bucket "${cfg.bucket}": ${chk.error}\n  Check the R2 keys in ${ENV_PATH}`);
 
   const api = new AdminApi(cfg);
+  let epoch: string | null = null;
   if (api.configured) {
     const h = await api.health();
     if (!h.ok) fail(`Can't reach your library at ${cfg.apiUrl}: ${h.error}\n  Run "imagerepo doctor" for details.`);
+    epoch = h.epoch ?? null;
   }
-  return { cfg, r2, api };
+  return { cfg, r2, api, epoch };
 }
 
 async function needTool(bin: string, why: string) {
@@ -80,6 +82,7 @@ async function runAdd(paths: string[], opts: any, legacyLibrary: boolean) {
   }
 
   const state = openLedger(STATE_PATH);
+  if (online && syncEpoch(state, online.epoch)) console.log(`\n  ${EPOCH_RESET_NOTE}`);
   try {
     const addOpts: AddOptions = {
       dryRun: opts.dryRun, yes: opts.yes || legacyLibrary, limit: opts.limit,
@@ -133,7 +136,12 @@ program
     if (gone.length) console.log(`\n  ${gone.length} unfinished file(s) are no longer on disk and were left alone`);
     if (!rows.length) { console.log('\n  nothing to retry\n'); state.close(); return; }
 
-    const { cfg, r2, api } = await connect();
+    const { cfg, r2, api, epoch } = await connect();
+    if (syncEpoch(state, epoch)) {
+      console.log(`\n  ${EPOCH_RESET_NOTE}\n  Nothing to retry: add your folders again with "imagerepo add".\n`);
+      state.close();
+      return;
+    }
     try {
       // The ledger already knows each file's album, so nothing is re-scanned.
       const found = { files: rows.map((r) => ({ ...r })), ignored: [], missing: [] };
@@ -172,6 +180,13 @@ program
     const state = openLedger(STATE_PATH);
     const api = new AdminApi(loadConfig());
     if (!api.configured) { state.close(); fail(`ADMIN_API_URL / ADMIN_TOKEN are not set in ${ENV_PATH}`); }
+    const h = await api.health();
+    if (!h.ok) { state.close(); fail(`Can't reach your library: ${h.error}`); }
+    if (syncEpoch(state, h.epoch)) {
+      console.log(`\n  ${EPOCH_RESET_NOTE}\n  Nothing to record.\n`);
+      state.close();
+      return;
+    }
 
     const runs = state.runs();
     const held = state.files().filter((f) => fileState(f, f.hash ? runs.get(f.hash) : undefined) === 'uploaded');

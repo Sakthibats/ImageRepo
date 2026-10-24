@@ -94,3 +94,28 @@ export function openLedger(path: string): IngestState {
   if (state.schemaVersion < 2) convertLegacy(state);
   return state;
 }
+
+/**
+ * A purge in the web app empties the library but cannot reach this ledger,
+ * which would go on believing every file is uploaded. Worse, with the
+ * originals gone, the runner would take each one for a deliberate delete and
+ * skip it. The Worker changes its library epoch on every purge, so a value
+ * other than the one last seen here means the ledger describes a library that
+ * no longer exists, and it starts again.
+ *
+ * A ledger that has never seen an epoch counts as 'initial', the value the
+ * Worker starts with, so a purge made before this check existed is noticed.
+ * Returns true when the ledger was reset.
+ */
+export function syncEpoch(state: IngestState, epoch: string | null | undefined): boolean {
+  if (!epoch) return false;              // a Worker that predates purging
+  const seen = state.getMeta('library_epoch') ?? 'initial';
+  if (seen === epoch) return false;
+  state.reset();
+  state.setMeta('library_epoch', epoch);
+  return true;
+}
+
+export const EPOCH_RESET_NOTE =
+  'Your library was purged in the web app, so this computer\'s record of past\n' +
+  '  uploads has been cleared. Everything you add from now on is uploaded afresh.';

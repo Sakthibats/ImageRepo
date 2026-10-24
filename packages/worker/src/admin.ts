@@ -3,11 +3,12 @@ import type { Env } from './types.js';
 import type { MediaRecord } from '@imagerepo/shared';
 import { requireAdmin } from './auth.js';
 import { upsertAlbums, ensureAlbumRows, insertMedia, listAlbums } from './db.js';
-import { bakeAlbum, bakeIndex } from './manifest.js';
+import { bakeAlbum, bakeIndex, sweepManifests } from './manifest.js';
 import { mutations } from './mutations.js';
 import { upload } from './upload.js';
 import { tagWrites } from './tags.js';
 import { stages } from './stages.js';
+import { purge } from './purge.js';
 
 const MAX_RECORDS_PER_CALL = 500;
 
@@ -19,11 +20,15 @@ admin.route('/', mutations);
 admin.route('/upload', upload);
 admin.route('/tags', tagWrites);
 admin.route('/stages', stages);
+admin.route('/purge', purge);
 
 admin.get('/health', async (c) => {
   // Prove both bindings actually work, not just that the Worker is up.
   const db = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM media').first<{ n: number }>();
-  return c.json({ ok: true, media: db?.n ?? 0, time: Date.now() });
+  // The CLI compares this with the epoch its ledger last saw, to notice a purge.
+  const epoch = await c.env.DB.prepare(`SELECT value FROM settings WHERE key = 'library_epoch'`)
+    .first<{ value: string }>();
+  return c.json({ ok: true, media: db?.n ?? 0, epoch: epoch?.value ?? null, time: Date.now() });
 });
 
 admin.post('/albums/ensure', async (c) => {
@@ -63,6 +68,8 @@ admin.post('/bake', async (c) => {
       const r = await bakeAlbum(c.env.DB, c.env.BUCKET, a.id);
       baked.push({ album: a.id, ...r });
     }
+    // A full bake is also when leftovers from deleted albums are cleared.
+    await sweepManifests(c.env.BUCKET, (results as any[]).map((a) => a.id));
   }
   const albums = await bakeIndex(c.env.DB, c.env.BUCKET);
   return c.json({ ok: true, baked, albums });

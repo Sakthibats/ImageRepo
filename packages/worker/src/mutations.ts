@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from './types.js';
-import { bakeAlbum, bakeIndex } from './manifest.js';
+import { PHOTO_WIDTHS } from '@imagerepo/shared';
+import { bakeAlbum, bakeIndex, deleteKeys, pruneManifests } from './manifest.js';
 
 /**
  * Owner-only mutations. Mounted under /admin, which requireAdmin() guards, so
@@ -17,6 +18,28 @@ const slug = (s: string) =>
     .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
 
 const now = () => Math.floor(Date.now() / 1000);
+
+/**
+ * D1 caps a statement at 100 bound parameters, and a request at a limited
+ * number of queries, so lists of ids are handled in IN (...) chunks rather
+ * than one statement per id.
+ */
+const CHUNK = 90;
+const chunks = <T>(xs: T[], n = CHUNK): T[][] =>
+  Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
+const marks = (n: number) => Array.from({ length: n }, (_, i) => `?${i + 1}`).join(',');
+
+/** Albums holding any of these media. */
+async function albumsOf(env: Env, ids: string[]): Promise<string[]> {
+  const out: string[] = [];
+  for (const part of chunks(ids)) {
+    const { results } = await env.DB.prepare(
+      `SELECT DISTINCT album_id FROM album_media WHERE media_id IN (${marks(part.length)})`
+    ).bind(...part).all<{ album_id: string }>();
+    out.push(...results.map((r) => r.album_id));
+  }
+  return out;
+}
 
 /** Parses a JSON body, treating a malformed one as empty rather than a 500. */
 async function body<T extends object>(c: { req: { json: <U>() => Promise<U> } }): Promise<Partial<T>> {
@@ -123,6 +146,7 @@ mutations.delete('/albums/:id', async (c) => {
 
   await c.env.DB.prepare('DELETE FROM albums WHERE id = ?1').bind(id).run();
   // share_links and album_media cascade via the schema's foreign keys.
+  await pruneManifests(c.env.BUCKET, id);
   await bakeIndex(c.env.DB, c.env.BUCKET);
   return c.json({ ok: true, deletedAlbum: id, deletedMedia: removedMedia });
 });
@@ -191,36 +215,44 @@ mutations.delete('/media', async (c) => {
   const ids = (b.mediaIds ?? []).filter((x) => /^[0-9a-f]{32}$/.test(x));
   if (!ids.length) return c.json({ error: 'mediaIds required' }, 400);
 
-  const { results } = await c.env.DB.prepare(
-    `SELECT DISTINCT album_id FROM album_media WHERE media_id IN (${ids.map((_, i) => `?${i + 1}`).join(',')})`
-  ).bind(...ids).all<{ album_id: string }>();
-
+  const albums = await albumsOf(c.env, ids);
   const deleted = await deleteMediaRows(c.env, ids);
-  await rebake(c.env, results.map((r) => r.album_id));
+  await rebake(c.env, albums);
   return c.json({ ok: true, deleted });
 });
+
+/**
+ * Every object a media item can have in R2. Stage versions never change a
+ * key, so this is all of them; delete is idempotent, so keys a kind of media
+ * never had cost nothing.
+ */
+function mediaKeys(row: { id: string; kind: string; ext: string; drv_ext: string | null }): string[] {
+  const dx = row.drv_ext || 'avif';
+  return [
+    `orig/${row.id}.${row.kind === 'video' ? 'mp4' : row.ext}`,
+    `post/${row.id}.jpg`,
+    `prev/${row.id}.mp4`,
+    ...PHOTO_WIDTHS.map((w) => `drv/${row.id}/${w}.${dx}`),
+  ];
+}
 
 /** Shared by media delete and album-delete-with-media. */
 async function deleteMediaRows(env: Env, ids: string[]): Promise<number> {
   if (!ids.length) return 0;
 
-  for (const id of ids) {
-    const row = await env.DB.prepare('SELECT id, kind, ext, drv_ext FROM media WHERE id = ?1')
-      .bind(id).first<{ id: string; kind: string; ext: string; drv_ext: string }>();
-    if (!row) continue;
-
-    const dx = row.drv_ext || 'avif';
-    const keys = [
-      `orig/${row.id}.${row.kind === 'video' ? 'mp4' : row.ext}`,
-      `post/${row.id}.jpg`,
-      `prev/${row.id}.mp4`,
-      ...['320', '1024', '2048'].map((w) => `drv/${row.id}/${w}.${dx}`),
-    ];
-    // R2 delete is idempotent, so keys that were never created are harmless.
-    await env.BUCKET.delete(keys);
+  const keys: string[] = [];
+  let found = 0;
+  for (const part of chunks(ids)) {
+    const { results } = await env.DB.prepare(
+      `SELECT id, kind, ext, drv_ext FROM media WHERE id IN (${marks(part.length)})`
+    ).bind(...part).all<{ id: string; kind: string; ext: string; drv_ext: string | null }>();
+    for (const row of results) keys.push(...mediaKeys(row));
+    found += results.length;
   }
+  await deleteKeys(env.BUCKET, keys);
 
-  const del = env.DB.prepare('DELETE FROM media WHERE id = ?1');
-  await env.DB.batch(ids.map((id) => del.bind(id)));
-  return ids.length;
+  // Tags, stages, album memberships and the ingest log cascade from media.
+  await env.DB.batch(chunks(ids).map((part) =>
+    env.DB.prepare(`DELETE FROM media WHERE id IN (${marks(part.length)})`).bind(...part)));
+  return found;
 }

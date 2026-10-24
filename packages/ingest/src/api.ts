@@ -99,7 +99,8 @@ export class AdminApi {
     return this.post('/admin/bake', album ? { album } : {});
   }
 
-  async health(): Promise<{ ok: boolean; error?: string }> {
+  /** `epoch` changes whenever the library is purged; null from a Worker that predates it. */
+  async health(): Promise<{ ok: boolean; error?: string; epoch?: string | null }> {
     try {
       const res = await fetch(`${this.cfg.apiUrl}/admin/health`, {
         headers: this.headers(),
@@ -108,7 +109,9 @@ export class AdminApi {
       if (res.status === 302 || res.status === 301) {
         return { ok: false, error: 'blocked by Access — set CF_ACCESS_CLIENT_ID/SECRET' };
       }
-      return res.ok ? { ok: true } : { ok: false, error: `${res.status} ${res.statusText}` };
+      if (!res.ok) return { ok: false, error: `${res.status} ${res.statusText}` };
+      const body = await res.json().catch(() => ({})) as { epoch?: string | null };
+      return { ok: true, epoch: body.epoch ?? null };
     } catch (e: any) {
       return { ok: false, error: e?.message ?? String(e) };
     }

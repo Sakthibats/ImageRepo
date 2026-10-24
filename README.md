@@ -118,7 +118,8 @@ The CLI reads `.env.ingest` and keeps its ledger in `.ingest/state.db`, both at
 the repo root, whichever folder you run it from. The ledger only knows what this
 computer uploaded. If you delete a photo in the web app, the CLI notices the next
 time it has anything to do for that file and leaves it deleted; `add --restore`
-brings such items back.
+brings such items back. After a full purge (see below) the CLI clears its ledger
+on its next run, so adding the same folders uploads everything again.
 
 ### How processing is organised
 
@@ -158,6 +159,13 @@ Open the Worker's hostname and sign in through Access.
   items between them.
 - **Tags** lets you tag selected items and browse or search by tag.
 - Inside an album you can drop photos to upload them from the browser.
+- Deleting an album keeps its photos unless you tick **Also delete its photos**.
+  Photos that are also in another album are kept either way.
+- **Settings** (the gear) shows what the library holds, and has **Purge
+  everything**: it deletes every photo, video, generated size, album, tag and
+  share link from R2 and D1, with no undo. You type `purge everything` to
+  confirm. It only works when you are signed in through Access in a browser.
+  The CLI's `ADMIN_TOKEN` and service token are refused.
 
 For local development, `npm run -w @imagerepo/web dev` starts Vite and proxies
 `/a` and `/admin` to the deployed Worker. `npm run worker:dev` runs the Worker
@@ -228,5 +236,13 @@ npm run -w @imagerepo/ingest test
 - `test/e2e-local.ts`: the same flow against a real local Worker and database.
   It is not part of `npm test`; the steps to run it are at the top of the file.
 
-The Worker and web app have no tests of their own; `npm run -w @imagerepo/worker
-typecheck` and the web build's `tsc` step are the only checks there.
+```bash
+npm run -w @imagerepo/worker test
+```
+
+- `packages/worker/test/purge.test.ts`: purge, album and media deletion, and
+  manifest cleanup. They run against the real Hono app in Node, with D1 as
+  in-memory SQLite (schema plus every migration), R2 as a map, and Access JWTs
+  signed by a key the test makes (`test/harness.ts`).
+
+The web app has no tests of its own; the build's `tsc` step is the only check there.

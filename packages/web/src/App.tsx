@@ -11,10 +11,12 @@ import { Uploader } from './components/Uploader.tsx';
 import { TimelineView } from './components/TimelineView.tsx';
 import { TagsView } from './components/TagsView.tsx';
 import { TagDialog } from './components/TagDialog.tsx';
+import { SettingsView } from './components/SettingsView.tsx';
 import { shareTokenFromPath } from './share.ts';
 import { loadSort, saveSort, type Item, type SortOrder } from './tags.ts';
 
-type Tab = 'photos' | 'albums' | 'tags';
+/** Settings has no tab of its own: it is reached from the gear, not a lens on the library. */
+type Tab = 'photos' | 'albums' | 'tags' | 'settings';
 
 export default function App() {
   // A /s/<token> URL is the guest experience; everything else is the owner app.
@@ -71,6 +73,7 @@ function OwnerApp() {
   const [lastClicked, setLastClicked] = useState<number | null>(null);
   const [dialog, setDialog] = useState<Dialog>({ kind: 'none' });
   const [text, setText] = useState('');
+  const [alsoMedia, setAlsoMedia] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [sort, setSort] = useState<SortOrder>(loadSort);
   const headRef = useHeadHeight();
@@ -182,13 +185,18 @@ function OwnerApp() {
           <h1>Photos</h1>
           {tabs}
           <div className="push row-gap">
-            {tab !== 'albums' && sortButton}
+            {(tab === 'photos' || tab === 'tags') && sortButton}
             {tab === 'albums' && (
               <button className="btn primary small"
                       onClick={() => { setText(''); setDialog({ kind: 'newAlbum' }); }}>
                 New album
               </button>
             )}
+            <button className={`icon-btn gear ${tab === 'settings' ? 'on' : ''}`} title="Settings"
+                    aria-label="Settings" aria-pressed={tab === 'settings'}
+                    onClick={() => { setTab('settings'); setSelection(new Set()); window.scrollTo(0, 0); }}>
+              ⚙
+            </button>
           </div>
         </header>
 
@@ -200,6 +208,10 @@ function OwnerApp() {
             onToggle={toggleIn(viewItems)}
             onItems={setViewItems}
           />
+        )}
+
+        {tab === 'settings' && (
+          <SettingsView onPurged={() => { setOpen(null); void loadIndex(); }} />
         )}
 
         {tab === 'tags' && (
@@ -247,7 +259,7 @@ function OwnerApp() {
                     <button className="icon-btn" title="Rename"
                             onClick={() => { setText(a.title); setDialog({ kind: 'renameAlbum', album: a }); }}>✎</button>
                     <button className="icon-btn danger" title="Delete album"
-                            onClick={() => setDialog({ kind: 'confirmDeleteAlbum', album: a })}>🗑</button>
+                            onClick={() => { setAlsoMedia(false); setDialog({ kind: 'confirmDeleteAlbum', album: a }); }}>🗑</button>
                   </div>
                 </div>
               ))}
@@ -438,16 +450,33 @@ function OwnerApp() {
         <Confirm
           title={`Delete album “${album.title}”?`}
           danger
-          confirmLabel="Delete album, keep photos"
-          body={<p className="muted">
-            The album and its share links go away. The {album.n} photos stay in
-            your library and in any other album they belong to.
-          </p>}
+          confirmLabel={alsoMedia ? 'Delete album and photos' : 'Delete album, keep photos'}
+          body={<>
+            <p className="muted">
+              {alsoMedia
+                ? <>The album and its share links go away, and its photos are
+                    deleted from storage for good. Photos that are also in another
+                    album are kept.</>
+                : <>The album and its share links go away. The {album.n} photos
+                    stay in your library and in any other album they belong to.</>}
+            </p>
+            <label className="field check">
+              <input type="checkbox" checked={alsoMedia} onChange={(e) => setAlsoMedia(e.target.checked)} />
+              <span>Also delete its photos permanently</span>
+            </label>
+          </>}
           onCancel={() => setDialog({ kind: 'none' })}
           onConfirm={() => {
+            const media = alsoMedia;
             setDialog({ kind: 'none' });
             setOpen(null);
-            void act(() => adminApi.deleteAlbum(album.id, false), `Deleted “${album.title}”`);
+            void (async () => {
+              try {
+                const r = await adminApi.deleteAlbum(album.id, media);
+                await refresh();
+                notify(media ? `Deleted “${album.title}” and ${r.deletedMedia} photos` : `Deleted “${album.title}”`);
+              } catch (e) { notify(`Failed: ${(e as Error).message}`); }
+            })();
           }}
         />
       );
