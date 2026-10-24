@@ -42,9 +42,9 @@ scripts/deploy.mts `npm run deploy`: checks, migrations, build, deploy, smoke te
 ## Commands
 
 ```bash
-npm run -w @imagerepo/worker test && npm run -w @imagerepo/worker typecheck   # seconds
-(cd packages/web && npx tsc --noEmit)
-(cd Preprocessing && .venv/bin/pytest -q)                                     # ~15s, needs ffmpeg
+npm test                         # everything: typechecks, Worker tests, pytest (~40s)
+npm run -w @imagerepo/worker test   # just the Worker (seconds)
+npm run test:python              # just Preprocessing (needs its .venv and ffmpeg)
 npm run deploy -- --dry-run      # what would change; changes nothing
 npm run deploy                   # migrations, web build, Worker deploy, smoke test
 (cd Preprocessing && .venv/bin/python -m preprocessing doctor)               # service config check

@@ -9,6 +9,8 @@
     "node": ">=20"
   },
   "scripts": {
+    "test": "npm run -s -w @imagerepo/worker typecheck && npm run -s -w @imagerepo/web typecheck && npm run -s -w @imagerepo/worker test && npm run -s test:python",
+    "test:python": "cd Preprocessing && .venv/bin/pytest -q",
     "worker:dev": "npm run -w @imagerepo/worker dev",
     "worker:deploy": "npm run -w @imagerepo/worker deploy",
     "deploy": "tsx scripts/deploy.mts",
