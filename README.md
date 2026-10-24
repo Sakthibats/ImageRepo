@@ -42,18 +42,14 @@ cd packages/worker
 npx wrangler d1 create imagerepo        # put the id in wrangler.toml
 npx wrangler r2 bucket create imagerepo
 npx wrangler d1 execute imagerepo --file=../../schema.sql --remote
-npx wrangler d1 execute imagerepo --file=../../migrations/001_drv_ext.sql --remote
-npx wrangler d1 execute imagerepo --file=../../migrations/002_tags.sql --remote
-npx wrangler d1 execute imagerepo --file=../../migrations/003_stages.sql --remote
 
 # Worker secrets
 npx wrangler secret put ADMIN_TOKEN     # bearer token the CLI presents
 npx wrangler secret put SHARE_HMAC_KEY  # signs guest sessions and asset URLs
 cd ../..
 
-# Build the web app, then deploy the Worker that serves it
-npm run -w @imagerepo/web build
-npm run worker:deploy
+# Migrations, web build, Worker deploy, smoke test
+npm run deploy
 ```
 
 Then put Cloudflare Access in front of the Worker's hostname:
@@ -76,6 +72,32 @@ npx imagerepo doctor                    # check tooling + connectivity
 from any folder, run `npm link` once in `packages/ingest`. If the command is not
 found after pulling changes, run `npm install` again.
 
+## Deploying
+
+```bash
+npm run deploy                  # the whole thing
+npm run deploy -- --dry-run     # checks, and what would change; changes nothing
+npm run migrate:local           # apply new migrations to the local dev database
+```
+
+`npm run deploy` runs from the repo root, on whatever is checked out:
+
+1. Checks you are logged in to Cloudflare (`npx wrangler login` in
+   `packages/worker` if not) and warns about uncommitted changes.
+2. Typechecks the Worker and web app, and runs the Worker tests
+   (`--skip-tests` skips them).
+3. Applies new files in `migrations/` to production D1. Wrangler lists them and
+   asks first. Applied files are recorded in the `d1_migrations` table, so each
+   runs once. Migrations go before the Worker and are additive, so the running
+   Worker keeps working in between.
+4. Builds the web app and deploys the Worker.
+5. Checks the deployed app loads and `/admin` refuses a request with no
+   credentials.
+
+Migrations used to be applied by hand, which leaves no record. The first run
+recognises those already in the database by what they created, lists them, and
+asks to record them as applied rather than run them again.
+
 ## Adding photos from your laptop
 
 ```bash
@@ -90,11 +112,11 @@ found and which albums are new, asks before uploading, then shows progress and
 a summary. When it finishes the photos are visible in the web app.
 
 - **Albums.** A folder's subfolders become albums, and photos sitting directly
-  in the folder go to an album named after it. Photos always arrive loose in the
-  album, outside any of its folders; you sort them into folders in the web app. A single file goes to an album
+  in the folder go to an album named after it. A single file goes to an album
   named after its parent folder. `--album` puts everything in one album, matching
   an existing album by name. `--album-depth` changes how many folder levels form
-  the name.
+  the name. Photos always arrive loose in the album, outside any of its folders;
+  you sort them into folders in the web app.
 - **Safe to re-run.** Anything already in your library is skipped. The same photo
   in two folders is uploaded once and filed in both albums.
 - **Resumable.** Progress is saved per file and per step, so an interrupted run

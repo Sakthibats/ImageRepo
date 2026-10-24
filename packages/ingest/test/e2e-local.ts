@@ -3,7 +3,8 @@
 // local Worker does not expose.
 //
 //   cd packages/worker
-//   npx wrangler d1 execute imagerepo --local --file=../../schema.sql   (and each migration)
+//   npx wrangler d1 execute imagerepo --local --file=../../schema.sql
+//   npm run migrate:local                                               (from the repo root)
 //   npx wrangler dev --local --var ADMIN_TOKEN:test
 //   E2E_API=http://127.0.0.1:8787 E2E_TOKEN=test npx tsx ../ingest/test/e2e-local.ts
 import sharp from 'sharp';

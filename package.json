@@ -7,6 +7,8 @@
   "scripts": {
     "ingest": "npm run -w @imagerepo/ingest start --",
     "worker:dev": "npm run -w @imagerepo/worker dev",
-    "worker:deploy": "npm run -w @imagerepo/worker deploy"
+    "worker:deploy": "npm run -w @imagerepo/worker deploy",
+    "deploy": "tsx scripts/deploy.mts",
+    "migrate:local": "tsx scripts/deploy.mts --local"
   }
 }
