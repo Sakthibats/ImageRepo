@@ -55,11 +55,22 @@ export class AdminApi {
   createShare(opts: {
     albumId: string; label?: string; expiresInDays?: number;
     passcode?: string; allowDownload?: boolean;
+    scope?: 'all' | 'folders'; folderIds?: string[]; includeLoose?: boolean;
   }) {
     return this.post('/admin/shares', opts) as Promise<{
       url: string; token: string; tokenHash: string;
       expiresAt: number | null; hasPasscode: boolean; allowDownload: boolean;
+      scope: 'all' | 'folders'; folderIds: string[]; includeLoose: boolean;
     }>;
+  }
+
+  async listFolders(albumId: string) {
+    const res = await fetch(`${this.cfg.apiUrl}/admin/albums/${encodeURIComponent(albumId)}/folders`, {
+      headers: this.headers(), redirect: 'manual',
+    });
+    if (res.status === 404) throw new Error('this Worker is older than the CLI — deploy it to use folders');
+    if (!res.ok) throw new Error(`/admin/albums/${albumId}/folders -> ${res.status}`);
+    return res.json() as Promise<{ folders: { id: string; title: string; n: number }[]; loose: number }>;
   }
 
   revokeShare(tokenHash: string) {

@@ -180,7 +180,10 @@ mutations.get('/albums/:id/folders', async (c) => {
     WHERE f.album_id = ?1
     GROUP BY f.id ORDER BY f.title
   `).bind(c.req.param('id')).all();
-  return c.json({ folders: results });
+  const loose = await c.env.DB.prepare(
+    'SELECT COUNT(*) AS n FROM album_media WHERE album_id = ?1 AND folder_id IS NULL'
+  ).bind(c.req.param('id')).first<{ n: number }>();
+  return c.json({ folders: results, loose: loose?.n ?? 0 });
 });
 
 mutations.post('/albums/:id/folders', async (c) => {

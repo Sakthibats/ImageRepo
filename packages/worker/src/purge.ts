@@ -29,7 +29,7 @@ const ROUNDS_PER_CALL = 5;
  */
 const TABLES = [
   'media_tags', 'tags', 'media_stages', 'ingest_log',
-  'share_links', 'album_media', 'folders', 'albums', 'media',
+  'share_folders', 'share_links', 'album_media', 'folders', 'albums', 'media',
 ];
 
 /**

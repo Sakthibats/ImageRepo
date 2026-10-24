@@ -239,17 +239,44 @@ share
   .option('--days <n>', 'expire after N days', (v) => parseFloat(v))
   .option('--passcode <text>', 'require a passcode')
   .option('--no-download', 'viewers can browse but not download originals')
+  .option('--folders <names>', 'share only these folders of the album, comma-separated')
+  .option('--loose', 'with --folders, also share the photos in no folder; alone, share only those')
+  .addHelpText('after', `
+Without --folders or --loose the link shares the whole album, including
+folders added to it later. With them, a folder added later stays private.`)
   .action(async (album: string, opts) => {
     const api = new AdminApi(loadConfig());
+
+    let scope: { scope: 'all' | 'folders'; folderIds?: string[]; includeLoose?: boolean } = { scope: 'all' };
+    const titles: string[] = [];
+    if (opts.folders !== undefined || opts.loose) {
+      const names: string[] = String(opts.folders ?? '').split(',').map((n) => n.trim()).filter(Boolean);
+      const { folders } = names.length ? await api.listFolders(album) : { folders: [] };
+      const ids = names.map((name) => {
+        const f = folders.find((x) => x.title.toLowerCase() === name.toLowerCase());
+        if (!f) {
+          fail(`no folder "${name}" in album "${album}"` +
+            (folders.length ? `\n  its folders: ${folders.map((x) => x.title).join(', ')}` : '\n  it has no folders'));
+        }
+        titles.push(f.title);
+        return f.id;
+      });
+      scope = { scope: 'folders', folderIds: ids, includeLoose: Boolean(opts.loose) };
+    }
+
     const r = await api.createShare({
       albumId: album,
       label: opts.label,
       expiresInDays: opts.days,
       passcode: opts.passcode,
       allowDownload: opts.download !== false,
+      ...scope,
     });
+    const shows = r.scope === 'all' ? 'the whole album'
+      : [...titles, ...(r.includeLoose ? ['loose photos'] : [])].join(', ');
     console.log(`\n  ${r.url}\n`);
     console.log(`  album      ${album}`);
+    console.log(`  shows      ${shows}`);
     console.log(`  expires    ${r.expiresAt ? new Date(r.expiresAt * 1000).toLocaleString() : 'never'}`);
     console.log(`  passcode   ${r.hasPasscode ? 'yes' : 'no'}`);
     console.log(`  downloads  ${r.allowDownload ? 'allowed' : 'blocked'}`);
@@ -276,7 +303,10 @@ share
         `${s.allow_download ? 'dl ' : '   '} ` +
         `${s.label ?? ''}`
       );
-      console.log(`           ${s.token_hash.slice(0, 24)}…`);
+      const shows = !s.scope || s.scope === 'all' ? 'whole album'
+        : [...(s.folders ?? []).map((f: { title: string }) => f.title), ...(s.include_loose ? ['loose photos'] : [])]
+            .join(', ') || 'nothing (its folders were deleted)';
+      console.log(`           ${s.token_hash.slice(0, 24)}…  shows: ${shows}`);
     }
     console.log();
   });

@@ -43,7 +43,11 @@ export const adminApi = {
   createShare: (opts: {
     albumId: string; label?: string; expiresInDays?: number;
     passcode?: string; allowDownload?: boolean;
-  }) => req<{ url: string; tokenHash: string }>('/admin/shares', json('POST', opts)),
+  } & ShareScope) => req<{ url: string; tokenHash: string }>('/admin/shares', json('POST', opts)),
+
+  /** Changes what a link shows; its URL stays the same. */
+  setShareScope: (tokenHash: string, scope: ShareScope) =>
+    req(`/admin/shares/${tokenHash}`, json('PATCH', scope)),
 
   revokeShare: (tokenHash: string) =>
     req(`/admin/shares/${tokenHash}/revoke`, json('POST')),
@@ -67,7 +71,7 @@ export const adminApi = {
     req<{ added: number }>('/admin/upload/commit', json('POST', { albumId, records, folderId })),
 
   folders: (albumId: string) =>
-    req<{ folders: { id: string; title: string; n: number }[] }>(`/admin/albums/${albumId}/folders`),
+    req<{ folders: { id: string; title: string; n: number }[]; loose: number }>(`/admin/albums/${albumId}/folders`),
 
   createFolder: (albumId: string, title: string) =>
     req<{ id: string }>(`/admin/albums/${albumId}/folders`, json('POST', { title })),
@@ -89,7 +93,14 @@ export interface ShareRow {
   created_at: number; expires_at: number | null; allow_download: number;
   revoked: number; view_count: number; last_seen_at: number | null;
   has_passcode: number;
+  scope: 'all' | 'folders'; include_loose: number;
+  folders: { id: string; title: string }[];
 }
+
+/** What a share link shows: the whole album, or some folders and maybe the loose photos. */
+export type ShareScope =
+  | { scope: 'all' }
+  | { scope: 'folders'; folderIds: string[]; includeLoose: boolean };
 
 export interface PurgeSummary {
   photos: number; videos: number; bytes: number;

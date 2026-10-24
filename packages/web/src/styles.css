@@ -586,3 +586,18 @@ h1, h2, h3 { letter-spacing: -0.012em; }
 @media (max-width: 680px) {
   .folder { flex-basis: 128px; }
 }
+
+/* ------------------------------------------------------------- share scope */
+.scope {
+  border: 1px solid var(--border-soft); border-radius: var(--r); background: var(--bg);
+  padding: 12px 15px 6px; margin: 18px 0 0; display: grid; gap: 9px;
+}
+.scope legend { font-size: 13px; font-weight: 600; color: var(--fg-soft); padding: 0 5px; margin-left: -5px; }
+.scope .field.check input[type="radio"] { width: 16px; height: 16px; accent-color: var(--accent); }
+.scope-list { display: grid; gap: 8px; padding: 2px 0 0 26px; }
+.scope-list p { margin: 2px 0 6px; }
+.share-scope { grid-column: 1; color: var(--fg-soft); font-weight: 600; }
+.share-actions { grid-column: 2; grid-row: 1 / span 3; align-self: center; }
+.share-edit { grid-column: 1 / -1; display: grid; gap: 10px; margin-top: 4px; }
+.share-edit .scope { margin: 0; background: var(--surface); }
+.share-edit p { margin: 0; }

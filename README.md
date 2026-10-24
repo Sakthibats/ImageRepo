@@ -186,16 +186,26 @@ Create one from an album's Share button, or from the CLI:
 
 ```bash
 npx imagerepo share create goa-2023 --label "sent to mum" --days 30 --passcode hunter2
+npx imagerepo share create goa-2023 --folders "Day 1,Beach" --loose   # only these folders, plus loose photos
 npx imagerepo share list
 npx imagerepo share revoke <token-hash-prefix>
 ```
 
+- **What a link shows.** By default, the whole album, including folders added
+  to it later. Choose **Only the folders I choose** (or pass `--folders` and
+  `--loose`) to share some folders and, optionally, the photos in no folder; a
+  folder added later stays private until you tick it. **Change folders** on an
+  existing link changes what it shows without changing its URL.
+- Guests see only the folders their link shares, plus **All photos**, which
+  combines them oldest first, with a toggle for newest first. The names of
+  other folders are never sent to them.
+
 - The URL is shown once. Only its SHA-256 is stored, so a database dump exposes
   no live link; if you lose it, revoke and create another.
 - `--no-download` lets viewers browse without downloading originals.
-- A guest can load only media from the album their link grants.
-- Revoking blocks the album listing immediately. Asset URLs already handed out
-  keep working for up to an hour.
+- A guest can load only media their link shares. Every image request is checked
+  against the link, so revoking it, or taking a folder out of it, applies at
+  once; only images already in the guest's browser cache outlive it.
 
 ## How media is treated
 
@@ -253,7 +263,10 @@ npm run -w @imagerepo/worker test
   manifest cleanup.
 - `packages/worker/test/folders.test.ts`: folder create/rename/delete, moving
   photos in and out, covers, ordering, and that a re-sent CLI record keeps its
-  folder. They run against the real Hono app in Node, with D1 as
+  folder.
+- `packages/worker/test/shares.test.ts`: links limited to folders, what guests
+  receive (and do not), changing a link's folders, and assets refused the
+  moment they fall outside a link. They run against the real Hono app in Node, with D1 as
   in-memory SQLite (schema plus every migration), R2 as a map, and Access JWTs
   signed by a key the test makes (`test/harness.ts`).
 
