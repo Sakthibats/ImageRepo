@@ -14,7 +14,7 @@ export const purge = new Hono<{ Bindings: Env }>({ strict: false });
 export const PURGE_PHRASE = 'purge everything';
 
 /** Everything the library writes lives under these. Other keys are left alone. */
-const PREFIXES = ['orig/', 'drv/', 'post/', 'prev/', 'man/'];
+const PREFIXES = ['orig/', 'drv/', 'post/', 'prev/', 'man/', 'inbox/'];
 
 /**
  * List-and-delete rounds per request, 1000 objects each. Small enough to stay
@@ -28,7 +28,7 @@ const ROUNDS_PER_CALL = 5;
  * Worker tests check by looking for any table that still has rows.
  */
 const TABLES = [
-  'media_tags', 'tags', 'media_stages', 'ingest_log',
+  'uploads', 'media_tags', 'tags', 'media_stages', 'ingest_log',
   'share_folders', 'share_links', 'album_media', 'folders', 'albums', 'media',
 ];
 
@@ -90,14 +90,15 @@ async function deleteObjects(bucket: R2Bucket, rounds: number): Promise<{ delete
   let deleted = 0;
   for (const prefix of PREFIXES) {
     for (;;) {
-      if (rounds-- <= 0) return { deleted, done: false };
       // No cursor: whatever was listed is deleted, so the first page of the
       // prefix is always what is left.
       const page = await bucket.list({ prefix, limit: 1000 });
-      if (page.objects.length) {
-        await bucket.delete(page.objects.map((o) => o.key));
-        deleted += page.objects.length;
-      }
+      if (!page.objects.length) break;
+      // Only rounds that delete count: an empty prefix is one list call, and
+      // counting it would let the prefixes alone use up a call's budget.
+      if (rounds-- <= 0) return { deleted, done: false };
+      await bucket.delete(page.objects.map((o) => o.key));
+      deleted += page.objects.length;
       if (!page.truncated) break;
     }
   }

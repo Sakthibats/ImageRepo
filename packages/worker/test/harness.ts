@@ -103,7 +103,11 @@ export class FakeR2 {
       json: async () => JSON.parse(new TextDecoder().decode(bytes)),
     };
   }
-  async head(key: string) { this.calls++; return this.objects.has(key) ? { key } : null; }
+  async head(key: string) {
+    this.calls++;
+    const bytes = this.objects.get(key);
+    return bytes ? { key, size: bytes.length } : null;
+  }
   async delete(keys: string | string[]) {
     this.calls++;
     const list = Array.isArray(keys) ? keys : [keys];
@@ -137,13 +141,80 @@ const pair = await crypto.subtle.generateKey(
 );
 const jwk = await crypto.subtle.exportKey('jwk', pair.publicKey);
 
-// The Worker fetches Access's signing keys; answer with ours.
+// ------------------------------------------------------------ R2 S3 API
+
+export const R2_ACCOUNT = 'testacct';
+const S3_BASE = `https://${R2_ACCOUNT}.r2.cloudflarestorage.com/imagerepo/`;
+
+/**
+ * Enough of R2's S3 API for presigned uploads: a PUT (the browser's, with a
+ * presigned URL) and the multipart calls the Worker makes itself. Objects
+ * land in whichever FakeR2 the test is using, set through `s3Bucket`.
+ */
+export const s3State = {
+  bucket: null as FakeR2 | null,
+  multipart: new Map<string, { key: string; parts: Map<number, Uint8Array> }>(),
+  /** Every S3 request, as "METHOD key?query", to check what the Worker did. */
+  log: [] as string[],
+};
+
+async function fakeS3(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const key = decodeURIComponent(url.pathname.replace(/^\/imagerepo\//, ''));
+  const q = url.searchParams;
+  s3State.log.push(`${req.method} ${key}${url.search ? '?' + [...q.keys()].join('&') : ''}`);
+  const signed = q.has('X-Amz-Signature') || (req.headers.get('authorization') ?? '').startsWith('AWS4-HMAC-SHA256');
+  if (!signed) return new Response('unsigned', { status: 403 });
+  const bucket = s3State.bucket!;
+  const uploadId = q.get('uploadId');
+
+  if (req.method === 'POST' && q.has('uploads')) {
+    const id = `mp-${s3State.multipart.size + 1}`;
+    s3State.multipart.set(id, { key, parts: new Map() });
+    return new Response(`<InitiateMultipartUploadResult><UploadId>${id}</UploadId></InitiateMultipartUploadResult>`);
+  }
+  if (uploadId) {
+    const mp = s3State.multipart.get(uploadId);
+    if (!mp || mp.key !== key) return new Response('NoSuchUpload', { status: 404 });
+    if (req.method === 'PUT') {
+      mp.parts.set(Number(q.get('partNumber')), new Uint8Array(await req.arrayBuffer()));
+      return new Response('', { headers: { etag: `"etag-${q.get('partNumber')}"` } });
+    }
+    if (req.method === 'GET') {
+      const parts = [...mp.parts].sort(([a], [b]) => a - b).map(([n, b]) =>
+        `<Part><PartNumber>${n}</PartNumber><ETag>&quot;etag-${n}&quot;</ETag><Size>${b.length}</Size></Part>`);
+      return new Response(`<ListPartsResult>${parts.join('')}</ListPartsResult>`);
+    }
+    if (req.method === 'POST') {
+      const body = await req.text();
+      const nums = [...body.matchAll(/<PartNumber>(\d+)<\/PartNumber><ETag>"etag-(\d+)"<\/ETag>/g)]
+        .map((m) => Number(m[1]));
+      const chunks = nums.map((n) => mp.parts.get(n)!);
+      const all = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+      let at = 0;
+      for (const c of chunks) { all.set(c, at); at += c.length; }
+      await bucket.put(key, all);
+      s3State.multipart.delete(uploadId);
+      return new Response('<CompleteMultipartUploadResult/>');
+    }
+    if (req.method === 'DELETE') { s3State.multipart.delete(uploadId); return new Response(null, { status: 204 }); }
+  }
+  if (req.method === 'PUT') {
+    await bucket.put(key, new Uint8Array(await req.arrayBuffer()));
+    return new Response('', { headers: { etag: '"x"' } });
+  }
+  return new Response('unsupported', { status: 400 });
+}
+
+// The Worker fetches Access's signing keys; answer with ours. R2's S3 API is
+// faked above.
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input instanceof Request ? input.url : input);
   if (url === `https://${TEAM}.cloudflareaccess.com/cdn-cgi/access/certs`) {
     return new Response(JSON.stringify({ keys: [{ ...jwk, kid: KID, alg: 'RS256', use: 'sig' }] }));
   }
+  if (url.startsWith(S3_BASE)) return fakeS3(input instanceof Request ? input : new Request(url, init));
   return realFetch(input, init);
 }) as typeof fetch;
 
@@ -165,12 +236,19 @@ export async function accessJwt(claims: Record<string, unknown>): Promise<string
 
 export const ADMIN_TOKEN = 'test-admin-token';
 
-export function makeWorld() {
+export const PREPROCESS_CLIENT_ID = 'preprocess.access';
+
+export function makeWorld(o: { s3?: boolean } = {}) {
   const { d1, sqlite } = makeD1();
   const bucket = new FakeR2();
+  s3State.bucket = bucket;
+  const s3 = o.s3 === false ? {} : {
+    R2_ACCOUNT_ID: R2_ACCOUNT, R2_BUCKET_NAME: 'imagerepo',
+    R2_ACCESS_KEY_ID: 'test-key-id', R2_SECRET_ACCESS_KEY: 'test-secret',
+  };
   const env = {
     DB: d1, BUCKET: bucket, ADMIN_TOKEN, SHARE_HMAC_KEY: 'test-hmac-key',
-    ACCESS_TEAM: TEAM, ACCESS_AUD: AUD,
+    ACCESS_TEAM: TEAM, ACCESS_AUD: AUD, PREPROCESS_CLIENT_ID, ...s3,
     ASSETS: { fetch: async () => new Response('<!doctype html>') },
   } as unknown as Env;
   const ctx = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} };

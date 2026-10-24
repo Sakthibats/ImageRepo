@@ -48,7 +48,18 @@ export async function ensureAlbumRows(db: D1Database, ids: string[]): Promise<vo
   await db.batch(ids.map((id) => stmt.bind(id, id, now)));
 }
 
-export async function insertMedia(db: D1Database, records: MediaRecord[]): Promise<number> {
+export async function insertMedia(
+  db: D1Database,
+  records: MediaRecord[],
+  o: {
+    /**
+     * Folder for a record's album link, when the link is new. Only browser
+     * uploads set one (the folder being viewed); the CLI never does.
+     */
+    folderOf?: Map<string, string | null>;
+    runner?: string;
+  } = {},
+): Promise<number> {
   if (!records.length) return 0;
   const now = Math.floor(Date.now() / 1000);
 
@@ -69,8 +80,8 @@ export async function insertMedia(db: D1Database, records: MediaRecord[]): Promi
   `);
 
   const link = db.prepare(`
-    INSERT INTO album_media (album_id, media_id, position)
-    VALUES (?1, ?2, ?3)
+    INSERT INTO album_media (album_id, media_id, position, folder_id)
+    VALUES (?1, ?2, ?3, ?4)
     ON CONFLICT(album_id, media_id) DO NOTHING
   `);
 
@@ -94,21 +105,21 @@ export async function insertMedia(db: D1Database, records: MediaRecord[]): Promi
     ));
     // taken_at ordering gives a sensible default position within the album.
     for (const albumId of r.albums) {
-      statements.push(link.bind(albumId, r.id, r.takenAt ?? 0));
+      statements.push(link.bind(albumId, r.id, r.takenAt ?? 0, o.folderOf?.get(r.id) ?? null));
     }
     statements.push(logStmt.bind(r.id, JSON.stringify(r.derivatives), now, '0.1.0'));
 
     // One statement for all of a record's stages, to keep the batch short.
     const stages = (r.stages ?? []).filter((s) => s?.name && Number.isInteger(s.version)).slice(0, 12);
     if (stages.length) {
-      const rows = stages.map((_, i) => `(?1, ?${i * 2 + 3}, ?${i * 2 + 4}, 'done', 1, NULL, 'cli', ?2)`);
+      const rows = stages.map((_, i) => `(?1, ?${i * 2 + 4}, ?${i * 2 + 5}, 'done', 1, NULL, ?3, ?2)`);
       statements.push(db.prepare(`
         INSERT INTO media_stages (media_id, stage, version, state, attempts, error, runner, updated_at)
         VALUES ${rows.join(', ')}
         ON CONFLICT(media_id, stage) DO UPDATE SET
           version = excluded.version, state = 'done', error = NULL, lease_until = NULL,
           runner = excluded.runner, updated_at = excluded.updated_at
-      `).bind(r.id, now, ...stages.flatMap((s) => [s.name, s.version])));
+      `).bind(r.id, now, o.runner ?? 'cli', ...stages.flatMap((s) => [s.name, s.version])));
     }
   }
 

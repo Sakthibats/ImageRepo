@@ -42,7 +42,7 @@ const b64urlToBytes = (s: string): Uint8Array => {
   return Uint8Array.from(bin, (c) => c.charCodeAt(0));
 };
 
-interface AccessClaims {
+export interface AccessClaims {
   aud?: string | string[]; exp?: number; iss?: string;
   email?: string; sub?: string; common_name?: string;
 }
@@ -65,7 +65,7 @@ export async function accessUserEmail(req: Request, env: Env): Promise<string | 
   return typeof claims.email === 'string' && claims.email ? claims.email : null;
 }
 
-async function verifiedClaims(req: Request, env: Env): Promise<AccessClaims | null> {
+export async function verifiedClaims(req: Request, env: Env): Promise<AccessClaims | null> {
   const team = env.ACCESS_TEAM?.trim();
   const aud = env.ACCESS_AUD?.trim();
   if (!team || !aud) return null;               // Access not configured yet

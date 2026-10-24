@@ -9,6 +9,16 @@ export const VIDEO_PREVIEW_HEIGHT = 720;
 
 export type MediaKind = 'photo' | 'video';
 
+/**
+ * Every file type the library takes, by lowercase extension. Each one has a
+ * metadata stripper (photos) or is remuxed by ffmpeg (video); anything else
+ * would carry its location through untouched, so it is refused.
+ */
+export const MEDIA_EXT: Record<string, MediaKind> = {
+  jpg: 'photo', jpeg: 'photo', png: 'photo', heic: 'photo', heif: 'photo',
+  mp4: 'video', mov: 'video', m4v: 'video',
+};
+
 /** What the CLI POSTs to /admin/ingest — one per file. */
 export interface MediaRecord {
   id: string;                 // sha256(file)[0..32]
@@ -56,6 +66,11 @@ export interface StageRef {
 /** R2 key layout. Content-addressed, so every key is immutable and cacheable forever. */
 export const r2Key = {
   original: (id: string, ext: string) => `orig/${id}.${ext}`,
+  /**
+   * A browser upload, as sent: metadata (and location) intact. Never served;
+   * the processing service strips it into orig/ and deletes this.
+   */
+  inbox: (id: string, ext: string) => `inbox/${id}.${ext}`,
   derivative: (id: string, width: number) => `drv/${id}/${width}.avif`,
   poster: (id: string) => `post/${id}.jpg`,
   videoPreview: (id: string) => `prev/${id}.mp4`,

@@ -1,6 +1,6 @@
 import type { Context, Next } from 'hono';
 import type { Env } from './types.js';
-import { verifyAccessJwt } from './access.js';
+import { verifiedClaims } from './access.js';
 
 /**
  * Constant-time string comparison. A plain `===` leaks the length of the
@@ -20,6 +20,13 @@ export function timingSafeEqual(a: string, b: string): boolean {
 }
 
 /**
+ * What the processing service may call. It holds credentials on whatever
+ * machine runs it, so a leaked token should not be able to delete, share or
+ * re-file anything: it takes work and hands back results, nothing more.
+ */
+const SERVICE_PATHS = /^\/admin\/(health|inbox\/(claim|complete|fail|summary)|stages\/[a-z]+)\/?$/;
+
+/**
  * Guards /admin/*. Two callers, two credentials:
  *
  *   - The admin UI runs in a browser that has already passed Cloudflare
@@ -31,13 +38,22 @@ export function timingSafeEqual(a: string, b: string): boolean {
  *
  * Either is sufficient; the Access policy is what restricts the JWT path to
  * the owner's own identity.
+ *
+ * The processing service has its own Access service token. Its JWT names that
+ * token's Client ID as common_name, and is held to SERVICE_PATHS.
  */
 export function requireAdmin() {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     // Verified, not merely present: this Worker is reachable directly on
     // workers.dev, so an unchecked assertion header proves nothing.
-    const subject = await verifyAccessJwt(c.req.raw, c.env);
-    if (subject) return next();
+    const claims = await verifiedClaims(c.req.raw, c.env);
+    if (claims) {
+      const service = c.env.PREPROCESS_CLIENT_ID?.trim();
+      if (service && claims.common_name === service && !SERVICE_PATHS.test(c.req.path)) {
+        return c.json({ error: 'not allowed for the processing service' }, 403);
+      }
+      return next();
+    }
 
     const expected = c.env.ADMIN_TOKEN;
     if (!expected) {
