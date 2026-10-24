@@ -58,17 +58,18 @@ export const adminApi = {
   purgeStep: (confirm: string, resume: boolean) =>
     req<{ deleted: number; done: boolean }>('/admin/purge/everything', json('POST', { confirm, resume })),
 
-  checkKnown: (ids: string[]) =>
-    req<{ known: string[] }>('/admin/upload/check', json('POST', { ids })),
+  /** What to do with each picked file: upload it (with presigned URLs), or nothing. */
+  inboxStart: (albumId: string, files: InboxFile[], folderId?: string) =>
+    req<{ files: InboxStart[] }>('/admin/inbox/start', json('POST', { albumId, folderId, files })),
 
-  putObject: (id: string, variant: string, blob: Blob, ext: string) =>
-    req<{ ok: true }>(`/admin/upload/${id}/${variant}?ext=${ext}`, {
-      method: 'PUT',
-      body: blob,
-    }),
+  inboxParts: (id: string, partNumbers: number[]) =>
+    req<{ parts: { partNumber: number; url: string }[] }>('/admin/inbox/parts', json('POST', { id, partNumbers })),
 
-  commitUpload: (albumId: string, records: UploadRecord[], folderId?: string) =>
-    req<{ added: number }>('/admin/upload/commit', json('POST', { albumId, records, folderId })),
+  inboxFinish: (ids: string[]) =>
+    req<{ files: InboxFinish[] }>('/admin/inbox/finish', json('POST', { ids })),
+
+  inboxSummary: (albumId: string) =>
+    req<InboxSummary>(`/admin/inbox/summary?album=${encodeURIComponent(albumId)}`),
 
   folders: (albumId: string) =>
     req<{ folders: { id: string; title: string; n: number }[]; loose: number }>(`/admin/albums/${albumId}/folders`),
@@ -109,10 +110,20 @@ export interface PurgeSummary {
   canPurge: boolean;
 }
 
-export interface UploadRecord {
-  id: string; width: number; height: number; bytes: number;
-  takenAt?: number; thumbhash?: string; origName: string;
-  drvExt: string; derivatives: string[];
+export interface InboxFile { id: string; name: string; size: number; lastModified?: number }
+
+export type InboxStart =
+  | { id: string; status: 'known' | 'queued' }
+  | { id: string; status: 'refused'; error: string }
+  | { id: string; status: 'upload'; url: string }
+  | { id: string; status: 'upload'; partSize: number; partCount: number; done: number[] };
+
+export interface InboxFinish { id: string; status: 'queued' | 'error'; error?: string; missing?: number[] }
+
+export interface InboxSummary {
+  counts: Partial<Record<'uploading' | 'ready' | 'claimed' | 'failed', number>>;
+  maxAttempts: number;
+  failed: { id: string; orig_name: string; error: string; attempts: number }[];
 }
 
 export const shareState = (s: ShareRow): 'active' | 'revoked' | 'expired' => {

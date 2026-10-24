@@ -331,6 +331,7 @@ function OwnerApp() {
       </header>
 
       <Uploader albumId={open.id} folder={folder ?? undefined}
+                onProgress={() => { void refresh(); }}
                 onDone={() => { void refresh(); notify('Upload complete'); }} />
 
       {items && (

@@ -5,7 +5,6 @@ import { requireAdmin } from './auth.js';
 import { upsertAlbums, ensureAlbumRows, insertMedia, listAlbums } from './db.js';
 import { bakeAlbum, bakeIndex, sweepManifests } from './manifest.js';
 import { mutations } from './mutations.js';
-import { upload } from './upload.js';
 import { inbox } from './inbox.js';
 import { tagWrites } from './tags.js';
 import { stages } from './stages.js';
@@ -18,7 +17,6 @@ admin.use('*', requireAdmin());
 
 // Owner-only mutations (albums, media, deletes).
 admin.route('/', mutations);
-admin.route('/upload', upload);
 admin.route('/inbox', inbox);
 admin.route('/tags', tagWrites);
 admin.route('/stages', stages);
