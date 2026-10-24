@@ -2,7 +2,7 @@
   "rules": [
     {
       "allowed": {
-        "origins": ["https://REPLACE-WITH-APP-HOSTNAME"],
+        "origins": ["https://imagerepo-api.baskaran-sakthivel.workers.dev"],
         "methods": ["PUT"],
         "headers": ["content-type"]
       },

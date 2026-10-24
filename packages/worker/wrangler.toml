@@ -32,11 +32,11 @@ ACCESS_AUD = "8522b25f12118db302869ff8bc23a8acbaa29b384c5cdd7fde09ffbf7f49ab53"
 # Browser uploads go straight to R2 through presigned URLs (src/s3.ts), which
 # need R2's S3 API: the account id here, and an R2 API token's key pair as
 # secrets. Until both are set, uploads answer 503.
-R2_ACCOUNT_ID = ""
+R2_ACCOUNT_ID = "7285e6ee853898a8530a2d5887941352"
 R2_BUCKET_NAME = "imagerepo"
 # Client ID of the processing service's Access service token. Requests with
 # that token are held to the few routes the service needs (src/auth.ts).
-PREPROCESS_CLIENT_ID = ""
+PREPROCESS_CLIENT_ID = "f8a11cca1d8a58058eb47501f1243d1f.access"
 
 # Secrets (never in this file):
 #   npx wrangler secret put ADMIN_TOKEN

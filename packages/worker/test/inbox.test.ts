@@ -148,7 +148,12 @@ console.log('\nprocessing service\n');
   const health = await w.call('GET', '/admin/health', { auth: service });
   check('but can check health', health.status === 200);
 
-  const claim = await w.call('POST', '/admin/inbox/claim', { auth: service, body: { runner: 'laptop', limit: 2 } });
+  const photosOnly = await w.call('POST', '/admin/inbox/claim', { auth: service, body: { kinds: ['video'], limit: 0 } });
+  check('a claim can ask for one kind only', photosOnly.json.items.length === 1 &&
+    photosOnly.json.items[0].kind === 'video', JSON.stringify(photosOnly.json));
+  w.sqlite.prepare(`UPDATE uploads SET state = 'ready', lease_until = NULL WHERE state = 'claimed'`).run();
+
+  const claim = await w.call('POST', '/admin/inbox/claim', { auth: service, body: { runner: 'laptop', limit: 2, kinds: ['photo', 'video'] } });
   check('the service claims the oldest waiting files', claim.status === 200 && claim.json.items.length === 2 &&
     claim.json.items[0].id === hex(1) && claim.json.items[0].key === `inbox/${hex(1)}.heic` &&
     claim.json.items[0].lastModified === 1_700_000_000, JSON.stringify(claim.json));

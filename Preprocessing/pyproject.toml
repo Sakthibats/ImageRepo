@@ -1,0 +1,29 @@
+[project]
+name = "imagerepo-preprocessing"
+version = "0.1.0"
+description = "Turns browser uploads in R2's inbox/ into the library's originals and derivatives"
+requires-python = ">=3.12"
+dependencies = [
+  "boto3>=1.36",
+  "httpx>=0.27",
+  "numpy>=2.0",
+  "pillow>=11.0",
+  "pillow-heif>=1.0",
+  # Bundles libvips (with AVIF) as a wheel: nothing to install on the machine.
+  "pyvips[binary]>=3.0",
+  # zoneinfo's data, which slim Linux images do not ship.
+  "tzdata",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["preprocessing*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

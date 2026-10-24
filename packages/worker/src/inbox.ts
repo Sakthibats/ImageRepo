@@ -308,8 +308,11 @@ inbox.get('/summary', async (c) => {
  * lease, so one that crashes just lets its batch lapse back into the queue.
  */
 inbox.post('/claim', async (c) => {
-  const b = await c.req.json<{ runner?: string; limit?: number; leaseSeconds?: number }>()
+  const b = await c.req.json<{ runner?: string; limit?: number; leaseSeconds?: number; kinds?: string[] }>()
     .catch(() => ({} as Record<string, never>));
+  // A service takes only what it can process: one without ffmpeg asks for photos.
+  const kinds = (Array.isArray(b.kinds) ? b.kinds : ['photo', 'video']).filter((k) => k === 'photo' || k === 'video');
+  if (!kinds.length) return c.json({ error: 'kinds must name photo or video' }, 400);
   const limit = Math.min(Math.max(Number(b.limit ?? 10), 1), 50);
   const lease = Math.min(Math.max(Number(b.leaseSeconds ?? 900), 60), 6 * 3600);
   const runner = String(b.runner ?? 'unknown').slice(0, 40);
@@ -322,11 +325,12 @@ inbox.post('/claim', async (c) => {
     UPDATE uploads SET state = 'claimed', runner = ?1, lease_until = ?2, updated_at = ?3
     WHERE id IN (
       SELECT id FROM uploads
-      WHERE state = 'ready' OR (state = 'claimed' AND lease_until <= ?3)
+      WHERE (state = 'ready' OR (state = 'claimed' AND lease_until <= ?3))
+        AND kind IN (${marks(kinds.length, 5)})
       ORDER BY created_at, id LIMIT ?4
     )
     RETURNING id, kind, ext, bytes, orig_name, last_modified, album_id, attempts
-  `).bind(runner, ts + lease, ts, limit).all<{
+  `).bind(runner, ts + lease, ts, limit, ...kinds).all<{
     id: string; kind: string; ext: string; bytes: number; orig_name: string;
     last_modified: number | null; album_id: string; attempts: number;
   }>();
