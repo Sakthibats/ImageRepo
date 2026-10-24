@@ -102,9 +102,8 @@ npm run deploy                   # migrations, web build, Worker deploy, smoke t
 ## Current state (25 October 2026)
 
 - Branch `cli-stages`, ahead of `origin/cli-stages`, not merged to `main`.
-  Production runs `1296690`; the CLI removal and service status (migration
-  008) are committed but not deployed. R2 CORS and the `inbox/` lifecycle
-  rule are set.
+  Production runs `8f5f077` (deployed 25 Oct); migrations 001–008 applied.
+  R2 CORS and the `inbox/` lifecycle rule are set.
 - The library was purged and is being re-added through the browser. The
   service runs on the laptop (`python -m preprocessing run`); not hosted yet.
 - Verified end to end: photos from laptop and iPhone. Not yet: real iPhone
