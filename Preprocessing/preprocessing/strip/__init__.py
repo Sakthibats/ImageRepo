@@ -1,7 +1,7 @@
 """Removes embedded metadata (and with it, location) without touching a pixel.
 
-Ports of packages/ingest/src/{jpeg,png,heic}.ts. tests/test_strip.py checks
-that each gives byte-identical output to the TypeScript original.
+Ported from the retired TypeScript CLI (packages/ingest, in git history);
+tests/test_strip.py checks the output is still byte-identical to it.
 """
 from dataclasses import dataclass, field
 

@@ -6,6 +6,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import app from '../src/index.js';
+import { insertMedia } from '../src/db.js';
+import type { MediaRecord } from '@imagerepo/shared';
 import type { Env } from '../src/types.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -253,7 +255,7 @@ export function makeWorld(o: { s3?: boolean } = {}) {
   } as unknown as Env;
   const ctx = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} };
 
-  /** A jwt with `token` too is what the CLI sends: a service-token JWT plus the bearer. */
+  /** A jwt with `token` too is a service-token JWT plus the ADMIN_TOKEN bearer. */
   type Auth = 'token' | 'none' | { jwt: string; token?: boolean };
   async function call(method: string, path: string, o: { body?: unknown; auth?: Auth; cookie?: string } = {}) {
     const headers: Record<string, string> = {};
@@ -277,7 +279,20 @@ export function makeWorld(o: { s3?: boolean } = {}) {
   return { env, sqlite, bucket, call };
 }
 
-/** A media record as the CLI would send it, with its objects put in R2. */
+/**
+ * Processed media, recorded as /admin/inbox/complete records it, with any
+ * albums it names created first.
+ */
+export async function addMedia(world: ReturnType<typeof makeWorld>, records: Partial<MediaRecord>[]) {
+  const album = world.sqlite.prepare(
+    `INSERT INTO albums (id, title, created_at, updated_at) VALUES (?, ?, 0, 0) ON CONFLICT(id) DO NOTHING`);
+  for (const a of new Set(records.flatMap((r) => r.albums ?? []))) album.run(a, a);
+  for (let i = 0; i < records.length; i += 200) {
+    await insertMedia(world.env.DB, records.slice(i, i + 200) as MediaRecord[]);
+  }
+}
+
+/** n photos in an album, with their objects in R2, and the album baked. */
 export async function seedMedia(
   world: ReturnType<typeof makeWorld>, n: number, album: string, start = 0,
 ): Promise<string[]> {
@@ -294,10 +309,7 @@ export async function seedMedia(
     await world.bucket.put(`orig/${id}.jpg`, 'o');
     for (const w of [320, 1024, 2048]) await world.bucket.put(`drv/${id}/${w}.avif`, 'd');
   }
-  for (let i = 0; i < records.length; i += 200) {
-    const r = await world.call('POST', '/admin/ingest', { body: { records: records.slice(i, i + 200) } });
-    if (r.status !== 200) throw new Error(`ingest failed: ${r.status} ${JSON.stringify(r.json)}`);
-  }
+  await addMedia(world, records);
   const baked = await world.call('POST', '/admin/bake', { body: { album } });
   if (baked.status !== 200) throw new Error(`bake failed: ${baked.status}`);
   return ids;

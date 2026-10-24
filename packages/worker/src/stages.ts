@@ -3,7 +3,7 @@ import type { Env } from './types.js';
 
 /**
  * Processing-stage bookkeeping. The Worker does no processing itself: runners
- * (the CLI today) do the work and report here, so that D1 can answer "which
+ * (the processing service) do the work and report here, so that D1 can answer "which
  * media still need stage X at version N?" for whichever runner asks next.
  */
 export const stages = new Hono<{ Bindings: Env }>({ strict: false });

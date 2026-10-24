@@ -1,4 +1,4 @@
-// Shared contract between the ingest CLI and the Worker.
+// Shared contract between the web app, the Worker and (by mirror) Preprocessing/.
 
 /** Derivative widths we generate. 320 = grid thumb, 1024 = tablet, 2048 = lightbox. */
 export const PHOTO_WIDTHS = [320, 1024, 2048] as const;
@@ -19,7 +19,7 @@ export const MEDIA_EXT: Record<string, MediaKind> = {
   mp4: 'video', mov: 'video', m4v: 'video',
 };
 
-/** What the CLI POSTs to /admin/ingest — one per file. */
+/** What the processing service sends to /admin/inbox/complete, one per file. */
 export interface MediaRecord {
   id: string;                 // sha256(file)[0..32]
   kind: MediaKind;
@@ -48,7 +48,7 @@ export interface MediaRecord {
 
   /** Album slugs seeded from the laptop folder structure. */
   albums: string[];
-  /** Variants the CLI actually uploaded, e.g. ['320','1024','2048','poster','preview']. */
+  /** Variants actually written, e.g. ['320','1024','2048','poster','preview']. */
   derivatives: string[];
 
   /** Everything the camera wrote, before stripping. Server-side only, like lat/lon. */

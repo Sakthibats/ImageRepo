@@ -71,12 +71,6 @@ export function SettingsView({ onPurged }: { onPurged: () => void }) {
           albums, folders, tags and share links. Share links stop working at
           once. There is no undo. The files on your computer are not touched.
         </p>
-        <p className="muted small">
-          The next time you run <code>imagerepo add</code>, the CLI notices the
-          purge and clears its own record of past uploads, so everything is
-          uploaded again.
-        </p>
-
         {phase.kind === 'running' && (
           <div className="purge-progress" role="status">
             <div className="bar"><div className="bar-fill indeterminate" /></div>

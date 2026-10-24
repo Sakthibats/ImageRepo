@@ -6,8 +6,8 @@ import { bakeIndex } from './manifest.js';
 /**
  * Empties the whole library: every row in D1 and every object the library
  * wrote to R2. There is no undo, so it takes more than the usual admin check:
- * someone signed in through Access in a browser. ADMIN_TOKEN, which sits in a
- * file on the laptop, is not enough to wipe everything.
+ * someone signed in through Access in a browser. ADMIN_TOKEN, or a service
+ * token on some machine, is not enough to wipe everything.
  */
 export const purge = new Hono<{ Bindings: Env }>({ strict: false });
 
@@ -51,8 +51,8 @@ purge.get('/summary', async (c) => {
 });
 
 /**
- * One step of a purge. The first call (no `resume`) empties D1 and sets a
- * new library epoch. Every call then deletes up to a few thousand objects
+ * One step of a purge. The first call (no `resume`) empties D1. Every call
+ * then deletes up to a few thousand objects
  * and says whether any remain.
  *
  * D1 goes first: once no row refers to an object, a purge cut short leaves
@@ -68,22 +68,14 @@ purge.post('/everything', async (c) => {
     return c.json({ error: `type "${PURGE_PHRASE}" to confirm` }, 400);
   }
 
-  let epoch: string | null = null;
   if (!b.resume) {
-    epoch = crypto.randomUUID();
-    await c.env.DB.batch([
-      ...TABLES.map((t) => c.env.DB.prepare(`DELETE FROM ${t}`)),
-      c.env.DB.prepare(`
-        INSERT INTO settings (key, value) VALUES ('library_epoch', ?1)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value
-      `).bind(epoch),
-    ]);
+    await c.env.DB.batch(TABLES.map((t) => c.env.DB.prepare(`DELETE FROM ${t}`)));
   }
 
   const { deleted, done } = await deleteObjects(c.env.BUCKET, ROUNDS_PER_CALL);
   // The index went with man/; an empty one lets the app load again.
   if (done) await bakeIndex(c.env.DB, c.env.BUCKET);
-  return c.json({ ok: true, deleted, done, ...(epoch ? { epoch } : {}) });
+  return c.json({ ok: true, deleted, done });
 });
 
 async function deleteObjects(bucket: R2Bucket, rounds: number): Promise<{ deleted: number; done: boolean }> {

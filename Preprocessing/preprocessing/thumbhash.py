@@ -1,6 +1,6 @@
 """ThumbHash encoder: a ~25-byte blurred placeholder the app shows while the
 real image loads. A port of rgbaToThumbHash from the `thumbhash` npm package,
-which the web app decodes; tests/test_thumbhash.py checks the two agree.
+which the web app decodes; tests/test_thumbhash.py checks they agree.
 """
 import base64
 import math

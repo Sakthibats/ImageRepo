@@ -1,7 +1,6 @@
 """Fixtures: small photos carrying the metadata a phone writes, GPS included."""
 import io
-import shutil
-import subprocess
+import json
 import threading
 from pathlib import Path
 
@@ -15,9 +14,10 @@ from preprocessing.runner import Runner, content_id
 
 pillow_heif.register_heif_opener()
 
-REPO = Path(__file__).resolve().parents[2]
-JS = Path(__file__).resolve().parent / 'js'
-TSX = REPO / 'node_modules' / '.bin' / 'tsx'
+FIXTURES = Path(__file__).resolve().parent / 'fixtures'
+# Outputs of the TypeScript strippers and the npm thumbhash encoder these
+# modules were ported from, recorded before that code was retired.
+EXPECTED = json.loads((FIXTURES / 'expected.json').read_text())
 XMP = b'<x:xmpmeta><rdf:Description exif:GPSLatitude="33,51.9S" note="gps-secret"/></x:xmpmeta>'
 
 
@@ -74,12 +74,6 @@ def photos(tmp_path: Path) -> dict[str, Path]:
         'png': write_photo(tmp_path / 'IMG_2.png', mode='RGBA'),
         'heic': write_photo(tmp_path / 'IMG_3.heic'),
     }
-
-
-def run_js(*args: str) -> bytes:
-    if not TSX.exists() or not shutil.which('node'):
-        pytest.skip('needs node and the repo’s npm install, to compare with the TypeScript original')
-    return subprocess.run([str(TSX), *args], check=True, capture_output=True, cwd=REPO).stdout
 
 
 def decode(data: bytes) -> bytes:

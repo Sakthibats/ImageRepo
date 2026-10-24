@@ -1,61 +1,17 @@
 import type { MediaRecord } from '@imagerepo/shared';
 
-/**
- * D1 caps the number of bound parameters per statement, so we insert one row
- * per statement and let batch() run them in a single transaction. That keeps
- * a 200-record ingest to one round trip without risking the parameter limit.
- */
-const MEDIA_COLS = 24;
-
 /** A camera's metadata is a few KB; anything far beyond that is a malformed file. */
 const MAX_RAW_META = 32 * 1024;
 
-export async function upsertAlbums(
-  db: D1Database,
-  albums: { id: string; title: string; seededFrom?: string }[],
-): Promise<number> {
-  if (!albums.length) return 0;
-  const now = Math.floor(Date.now() / 1000);
-
-  const stmt = db.prepare(`
-    INSERT INTO albums (id, title, created_at, updated_at, seeded_from)
-    VALUES (?1, ?2, ?3, ?3, ?4)
-    ON CONFLICT(id) DO UPDATE SET
-      -- Never clobber a title the user has since edited in the admin UI.
-      title       = CASE WHEN albums.seeded_from IS NOT NULL
-                          AND albums.title = albums.seeded_from
-                         THEN excluded.title ELSE albums.title END,
-      updated_at  = excluded.updated_at
-  `);
-
-  await db.batch(albums.map((a) => stmt.bind(a.id, a.title, now, a.seededFrom ?? null)));
-  return albums.length;
-}
-
 /**
- * Guarantees album rows exist without touching any that already do. Used as a
- * safety net before inserting media: referencing a missing album would fail
- * the whole batch, but we must not overwrite a real title with a slug.
+ * Records processed media. D1 caps bound parameters per statement, so each
+ * row is its own statement and batch() runs them in one transaction.
  */
-export async function ensureAlbumRows(db: D1Database, ids: string[]): Promise<void> {
-  if (!ids.length) return;
-  const now = Math.floor(Date.now() / 1000);
-  const stmt = db.prepare(`
-    INSERT INTO albums (id, title, created_at, updated_at)
-    VALUES (?1, ?2, ?3, ?3)
-    ON CONFLICT(id) DO NOTHING
-  `);
-  await db.batch(ids.map((id) => stmt.bind(id, id, now)));
-}
-
 export async function insertMedia(
   db: D1Database,
   records: MediaRecord[],
   o: {
-    /**
-     * Folder for a record's album link, when the link is new. Only browser
-     * uploads set one (the folder being viewed); the CLI never does.
-     */
+    /** Folder for a record's album link, when the link is new: the one being viewed at upload. */
     folderOf?: Map<string, string | null>;
     runner?: string;
   } = {},
@@ -85,12 +41,6 @@ export async function insertMedia(
     ON CONFLICT(album_id, media_id) DO NOTHING
   `);
 
-  const logStmt = db.prepare(`
-    INSERT INTO ingest_log (media_id, derivatives, ingested_at, cli_version)
-    VALUES (?1, ?2, ?3, ?4)
-    ON CONFLICT(media_id) DO UPDATE SET
-      derivatives = excluded.derivatives, ingested_at = excluded.ingested_at
-  `);
 
   const statements: D1PreparedStatement[] = [];
   for (const r of records) {
@@ -107,7 +57,6 @@ export async function insertMedia(
     for (const albumId of r.albums) {
       statements.push(link.bind(albumId, r.id, r.takenAt ?? 0, o.folderOf?.get(r.id) ?? null));
     }
-    statements.push(logStmt.bind(r.id, JSON.stringify(r.derivatives), now, '0.1.0'));
 
     // One statement for all of a record's stages, to keep the batch short.
     const stages = (r.stages ?? []).filter((s) => s?.name && Number.isInteger(s.version)).slice(0, 12);
@@ -119,7 +68,7 @@ export async function insertMedia(
         ON CONFLICT(media_id, stage) DO UPDATE SET
           version = excluded.version, state = 'done', error = NULL, lease_until = NULL,
           runner = excluded.runner, updated_at = excluded.updated_at
-      `).bind(r.id, now, o.runner ?? 'cli', ...stages.flatMap((s) => [s.name, s.version])));
+      `).bind(r.id, now, o.runner ?? 'preprocess', ...stages.flatMap((s) => [s.name, s.version])));
     }
   }
 
@@ -158,4 +107,3 @@ export function albumMedia(db: D1Database, albumId: string) {
   `).bind(albumId).all();
 }
 
-export { MEDIA_COLS };

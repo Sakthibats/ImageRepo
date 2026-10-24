@@ -1,7 +1,7 @@
 """Resized copies of a photo, as AVIF, plus its ThumbHash.
 
-Matches packages/ingest/src/photo.ts: the same widths, qualities and effort,
-upright, never upscaled. Every output is written with no metadata at all, so
+The same widths, qualities and effort the retired CLI used: upright, never
+upscaled. Every output is written with no metadata at all, so
 derivatives are GPS-free by construction.
 """
 from dataclasses import dataclass

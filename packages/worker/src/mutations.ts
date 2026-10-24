@@ -172,7 +172,7 @@ async function folderClash(env: Env, albumId: string, title: string, except = ''
   ).bind(albumId, title, except).first<{ title: string }>();
 }
 
-/** The album's folders with counts. The CLI and the share dialog list these. */
+/** The album's folders with counts, for the share dialog. */
 mutations.get('/albums/:id/folders', async (c) => {
   const { results } = await c.env.DB.prepare(`
     SELECT f.id, f.title, COUNT(am.media_id) AS n

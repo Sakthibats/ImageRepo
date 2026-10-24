@@ -379,7 +379,7 @@ function OwnerApp() {
             <h2>{activeView === 'loose' ? 'Every photo is in a folder' : 'This folder is empty'}</h2>
             <p className="muted">
               {activeView === 'loose'
-                ? 'Photos added from the CLI arrive here, outside any folder.'
+                ? 'Photos added while viewing All photos arrive here, outside any folder.'
                 : 'Drop photos above, or open All photos, select some, and use Move to folder.'}
             </p>
           </div>

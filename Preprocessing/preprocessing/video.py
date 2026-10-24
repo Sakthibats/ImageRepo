@@ -1,4 +1,4 @@
-"""ffprobe and ffmpeg, as packages/ingest/src/video.ts uses them."""
+"""ffprobe and ffmpeg: probing, lossless remux, poster frames, previews."""
 import functools
 import json
 import re

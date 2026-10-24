@@ -1,18 +1,17 @@
+import hashlib
 import io
 
 import pytest
 from PIL import Image
 
 from preprocessing.strip import StripError, strip_metadata
-from conftest import JS, decode, run_js
+from conftest import EXPECTED, FIXTURES, decode
 
 
-@pytest.mark.parametrize('ext', ['jpg', 'png', 'heic'])
-def test_same_bytes_as_the_cli(photos, tmp_path, ext):
-    src = photos[ext]
-    out = tmp_path / f'ts.{ext}'
-    run_js(str(JS / 'strip.ts'), ext, str(src), str(out))
-    assert strip_metadata(src.read_bytes(), ext).data == out.read_bytes()
+@pytest.mark.parametrize('name', ['phone.jpg', 'phone.png', 'phone.heic'])
+def test_same_bytes_as_the_typescript_original(name):
+    out = strip_metadata((FIXTURES / name).read_bytes(), name.split('.')[1]).data
+    assert hashlib.sha256(out).hexdigest() == EXPECTED['strip'][name]
 
 
 @pytest.mark.parametrize('ext', ['jpg', 'png', 'heic'])

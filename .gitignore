@@ -6,10 +6,6 @@ dist/
 .env.ingest
 *.log
 
-# local ingest state + staged derivatives (never commit)
-.ingest/
-staging/
-
 # Preprocessing service (Python)
 .venv/
 __pycache__/

@@ -1,7 +1,7 @@
 // The web app's uploader (packages/web/src/upload.ts) against this Worker's
 // inbox routes and a fake R2: what a browser does, end to end.
 import { createHash } from 'node:crypto';
-import { makeWorld, seedMedia, accessJwt, check, finish, PREPROCESS_CLIENT_ID } from './harness.js';
+import { makeWorld, seedMedia, addMedia, accessJwt, check, finish, PREPROCESS_CLIENT_ID } from './harness.js';
 import { uploadFiles, watchProcessing, hashFile, type Api, type Put } from '../../web/src/upload.ts';
 
 type World = ReturnType<typeof makeWorld>;
@@ -49,10 +49,10 @@ const api = apiFor(w);
 
 const a = noise(5000, 1), b = noise(6000, 2), c = noise(7000, 3), k = noise(4000, 4);
 // One the library already has, in another album.
-await w.call('POST', '/admin/ingest', { body: { records: [{
+await addMedia(w, [{
   id: idOf(k), kind: 'photo', ext: 'jpg', bytes: k.length, width: 4, height: 3,
   origName: 'old.jpg', albums: ['kids'], derivatives: ['320'],
-}] } });
+}]);
 
 check('hashing in the browser gives the library’s ids, small files and large',
   await hashFile(new Blob([a])) === idOf(a) && await hashFile(new Blob([noise(40 * MiB, 9)])) === idOf(noise(40 * MiB, 9)));

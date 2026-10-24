@@ -1,7 +1,6 @@
 """The row the Worker stores, rebuilt from what the stages produced.
 
-The shape is MediaRecord in packages/shared/src/index.ts, as the CLI's
-buildRecord makes it. Album and folder are not set here: the Worker takes
+The shape is MediaRecord in packages/shared/src/index.ts. Album and folder are not set here: the Worker takes
 them from the upload, so the service cannot file anything anywhere.
 """
 import time

@@ -2,8 +2,8 @@
 import { makeWorld, seedMedia, accessJwt, check, finish } from './harness.js';
 
 const person = { jwt: await accessJwt({ email: 'owner@example.com', sub: 'u1' }) };
-// What the CLI sends: Access adds a service-token JWT, and the CLI its bearer.
-const cli = { jwt: await accessJwt({ common_name: 'abc.access', sub: '' }), token: true };
+// A script with every credential short of a person: a service-token JWT and ADMIN_TOKEN.
+const script = { jwt: await accessJwt({ common_name: 'abc.access', sub: '' }), token: true };
 const PHRASE = 'purge everything';
 
 console.log('\npurge everything\n');
@@ -19,13 +19,10 @@ console.log('\npurge everything\n');
   w.sqlite.prepare(`INSERT INTO uploads (id, kind, ext, bytes, orig_name, album_id, state, created_at, updated_at)
     VALUES (?, 'photo', 'jpg', 13, 'x.jpg', 'trip', 'ready', 0, 0)`).run('b'.repeat(32));
 
-  const before = (await w.call('GET', '/admin/health')).json.epoch;
-  check('a fresh library has an epoch', before === 'initial', String(before));
-
   const byToken = await w.call('POST', '/admin/purge/everything', { body: { confirm: PHRASE } });
   check('ADMIN_TOKEN cannot purge', byToken.status === 403, String(byToken.status));
-  const byCli = await w.call('POST', '/admin/purge/everything', { auth: cli, body: { confirm: PHRASE } });
-  check('the CLI, with a service token and ADMIN_TOKEN, cannot purge', byCli.status === 403, String(byCli.status));
+  const byScript = await w.call('POST', '/admin/purge/everything', { auth: script, body: { confirm: PHRASE } });
+  check('a service token with ADMIN_TOKEN cannot purge', byScript.status === 403, String(byScript.status));
   const noAuth = await w.call('POST', '/admin/purge/everything', { auth: 'none', body: { confirm: PHRASE } });
   check('no credentials cannot purge', noAuth.status === 401, String(noAuth.status));
   const wrong = await w.call('POST', '/admin/purge/everything', { auth: person, body: { confirm: 'yes' } });
@@ -36,14 +33,13 @@ console.log('\npurge everything\n');
   const summary = await w.call('GET', '/admin/purge/summary', { auth: person });
   check('summary counts the library', summary.json.photos === 1230 && summary.json.albums === 2 &&
     summary.json.shares === 1 && summary.json.tags === 1 && summary.json.canPurge === true, JSON.stringify(summary.json));
-  const cliSummary = await w.call('GET', '/admin/purge/summary', { auth: cli });
-  check('the CLI can read the summary but is told it cannot purge', cliSummary.status === 200 && cliSummary.json.canPurge === false);
+  const scriptSummary = await w.call('GET', '/admin/purge/summary', { auth: script });
+  check('a script can read the summary but is told it cannot purge', scriptSummary.status === 200 && scriptSummary.json.canPurge === false);
 
   let calls = 0;
   w.bucket.calls = 0;
   let res = await w.call('POST', '/admin/purge/everything', { auth: person, body: { confirm: PHRASE } });
   calls++;
-  const epoch = res.json.epoch;
   let deleted = res.json.deleted;
   const firstCallR2 = w.bucket.calls;
   while (res.status === 200 && !res.json.done && calls < 50) {
@@ -65,16 +61,14 @@ console.log('\npurge everything\n');
   const left = tables.filter((t) => (w.sqlite.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as any).n > 0);
   check('every table is empty', left.length === 0, left.join(', '));
 
-  const after = (await w.call('GET', '/admin/health')).json.epoch;
-  check('the epoch changed', after === epoch && after !== before, `${before} -> ${after}`);
-
   const index = await w.call('GET', '/a/manifest/index');
   check('the app loads an empty index afterwards', index.status === 200 && index.json.albums.length === 0);
 
-  const again = await w.call('POST', '/admin/ingest', {
-    body: { records: [{ id: 'f'.repeat(32), kind: 'photo', ext: 'jpg', bytes: 1, origName: 'a.jpg', albums: ['new'], derivatives: [] }] },
+  const album = await w.call('POST', '/admin/albums', { body: { title: 'New' } });
+  const again = await w.call('POST', '/admin/inbox/start', {
+    body: { albumId: album.json.id, files: [{ id: 'f'.repeat(32), name: 'a.jpg', size: 10 }] },
   });
-  check('the library takes new uploads after a purge', again.status === 200);
+  check('the library takes new uploads after a purge', again.json?.files?.[0]?.status === 'upload', JSON.stringify(again.json));
 }
 
 console.log('\ndeleting media and albums\n');

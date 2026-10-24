@@ -55,7 +55,7 @@ export async function verifyAccessJwt(req: Request, env: Env): Promise<string | 
 
 /**
  * The email of the person signed in through Access, or null. Service tokens,
- * which is how the CLI gets past Access, are issued a valid JWT too, but one
+ * which is how the processing service gets past Access, are issued a valid JWT too, but one
  * with no email and a common_name instead. This is what tells someone at a
  * browser apart from a script holding credentials.
  */

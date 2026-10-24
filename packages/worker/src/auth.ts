@@ -27,20 +27,16 @@ export function timingSafeEqual(a: string, b: string): boolean {
 const SERVICE_PATHS = /^\/admin\/(health|inbox\/(claim|complete|fail|summary)|stages\/[a-z]+)\/?$/;
 
 /**
- * Guards /admin/*. Two callers, two credentials:
+ * Guards /admin/*. Two credentials:
  *
- *   - The admin UI runs in a browser that has already passed Cloudflare
- *     Access, so it presents the signed Access JWT. It has no bearer token
- *     and cannot be given one without shipping a secret to the client.
- *   - The ingest CLI cannot complete Access's interactive browser login, so
- *     it presents ADMIN_TOKEN (and an Access service token to get past Access
- *     itself).
+ *   - A verified Access JWT. The admin UI has one because the browser passed
+ *     Access's login; the processing service gets one from its Access service
+ *     token. The service's JWT names that token's Client ID as common_name,
+ *     and is held to SERVICE_PATHS.
+ *   - ADMIN_TOKEN as a bearer, for scripts and for local development, where
+ *     Access is not in front.
  *
- * Either is sufficient; the Access policy is what restricts the JWT path to
- * the owner's own identity.
- *
- * The processing service has its own Access service token. Its JWT names that
- * token's Client ID as common_name, and is held to SERVICE_PATHS.
+ * The Access policy is what restricts the JWT path to the owner's identity.
  */
 export function requireAdmin() {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {

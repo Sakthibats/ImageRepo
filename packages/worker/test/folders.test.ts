@@ -1,5 +1,5 @@
 // Folders inside albums, against an in-memory Worker.
-import { makeWorld, seedMedia, check, finish } from './harness.js';
+import { makeWorld, seedMedia, addMedia, check, finish } from './harness.js';
 
 type World = ReturnType<typeof makeWorld>;
 
@@ -69,11 +69,9 @@ m = await manifest(w, 'trip');
 check('a folder can be renamed', rn.status === 200 && m.folders.some((f: any) => f.title === 'Beach day'));
 check('not onto another folder name', rnClash.status === 409);
 
-// The CLI re-sending records (say after a stage version bump) must not undo sorting.
-await w.call('POST', '/admin/ingest', {
-  body: { records: [{ id: trip[0], kind: 'photo', ext: 'jpg', bytes: 1000, width: 400, height: 300,
-    origName: 'IMG_0.jpg', albums: ['trip'], derivatives: ['320', '1024', '2048'] }] },
-});
+// Recording a photo again (say after a stage version bump) must not undo sorting.
+await addMedia(w, [{ id: trip[0], kind: 'photo', ext: 'jpg', bytes: 1000, width: 400, height: 300,
+  origName: 'IMG_0.jpg', albums: ['trip'], derivatives: ['320', '1024', '2048'] }]);
 await w.call('POST', '/admin/bake', { body: { album: 'trip' } });
 m = await manifest(w, 'trip');
 check('a re-sent record keeps its folder', m.items.find((i: any) => i.id === trip[0]).f === day1.json.id);
