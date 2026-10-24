@@ -49,6 +49,11 @@ class WorkerApi:
     def health(self) -> dict:
         return self._call('GET', '/admin/health')
 
+    def heartbeat(self, kinds: tuple[str, ...], busy: int, stopping: bool = False) -> None:
+        self._call('POST', '/admin/inbox/heartbeat', {
+            'runner': self.runner, 'kinds': list(kinds), 'busy': busy, 'stopping': stopping,
+        })
+
     def claim(self, limit: int, kinds: tuple[str, ...], lease_seconds: int = 900) -> list[dict]:
         r = self._call('POST', '/admin/inbox/claim', {
             'runner': self.runner, 'limit': limit, 'kinds': list(kinds), 'leaseSeconds': lease_seconds,

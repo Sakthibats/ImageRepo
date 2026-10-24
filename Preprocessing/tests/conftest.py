@@ -103,6 +103,10 @@ class FakeApi:
         self.completed: list[dict] = []
         self.failed: list[dict] = []
         self.claims: list[tuple] = []
+        self.beats: list[tuple] = []
+
+    def heartbeat(self, kinds, busy, stopping=False):
+        self.beats.append((kinds, busy, stopping))
 
     def claim(self, limit, kinds, lease_seconds=900):
         self.claims.append((limit, kinds, lease_seconds))

@@ -24,7 +24,7 @@ export function timingSafeEqual(a: string, b: string): boolean {
  * machine runs it, so a leaked token should not be able to delete, share or
  * re-file anything: it takes work and hands back results, nothing more.
  */
-const SERVICE_PATHS = /^\/admin\/(health|inbox\/(claim|complete|fail|summary)|stages\/[a-z]+)\/?$/;
+const SERVICE_PATHS = /^\/admin\/(health|inbox\/(heartbeat|claim|complete|fail|summary)|stages\/[a-z]+)\/?$/;
 
 /**
  * Guards /admin/*. Two credentials:

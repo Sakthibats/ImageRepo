@@ -11,7 +11,8 @@ import { bakeAlbum, bakeIndex } from './manifest.js';
  *   browser:  /start  → presigned URLs (or "already have it")
  *             PUT the raw file straight to R2 at inbox/{id}.{ext}
  *             /finish → the file is checked for size and queued
- *   service:  /claim  → a batch under a lease
+ *   service:  /heartbeat every 20s, so the app can say whether one is running
+ *             /claim  → a batch under a lease
  *             strip, resize, write orig/ drv/ post/ prev/ itself
  *             /complete → media rows, album bake, inbox copy deleted
  *             /fail     → retried, or given up on after MAX_ATTEMPTS
@@ -44,6 +45,8 @@ const RECORDS_PER_CALL = 20;
 const MAX_ATTEMPTS = 5;
 /** An upload nobody came back to finish. R2's lifecycle rule removes its bytes too. */
 const ABANDONED_AFTER = 7 * 86400;
+/** A service checks in every 20s; three missed and it is reported offline. */
+const ONLINE_WITHIN = 60;
 
 const now = () => Math.floor(Date.now() / 1000);
 const partSizeFor = (bytes: number) => Math.max(MIN_PART, Math.ceil(bytes / MAX_PARTS / MiB) * MiB);
@@ -293,14 +296,38 @@ inbox.get('/summary', async (c) => {
     WHERE state = 'failed' AND (?1 IS NULL OR album_id = ?1)
     ORDER BY updated_at DESC LIMIT 50
   `).bind(album).all();
+  const ts = now();
+  const { results: runners } = await c.env.DB.prepare(`
+    SELECT name, kinds, busy, state, last_seen FROM runners
+    WHERE last_seen > ?1 ORDER BY last_seen DESC LIMIT 10
+  `).bind(ts - 7 * 86400).all<{ name: string; kinds: string; busy: number; state: string; last_seen: number }>();
   return c.json({
     counts: Object.fromEntries(counts.map((r) => [r.state, r.n])),
     maxAttempts: MAX_ATTEMPTS,
     failed,
+    runners: runners.map((r) => ({
+      name: r.name, kinds: r.kinds.split(','), busy: r.busy, lastSeen: r.last_seen,
+      online: r.state === 'running' && r.last_seen > ts - ONLINE_WITHIN,
+    })),
   });
 });
 
 // ------------------------------------------------------------------ service
+
+/** A service saying it is alive (or, with `stopping`, that it has stopped). */
+inbox.post('/heartbeat', async (c) => {
+  const b = await c.req.json<{ runner?: string; kinds?: string[]; busy?: number; stopping?: boolean }>()
+    .catch(() => ({} as Record<string, never>));
+  const runner = String(b.runner ?? 'unknown').slice(0, 40);
+  const kinds = (Array.isArray(b.kinds) ? b.kinds : []).filter((k) => k === 'photo' || k === 'video');
+  const busy = Math.max(0, Math.min(Number(b.busy) || 0, 1000));
+  await c.env.DB.prepare(`
+    INSERT INTO runners (name, kinds, busy, state, last_seen) VALUES (?1, ?2, ?3, ?4, ?5)
+    ON CONFLICT(name) DO UPDATE SET
+      kinds = excluded.kinds, busy = excluded.busy, state = excluded.state, last_seen = excluded.last_seen
+  `).bind(runner, kinds.join(',') || 'photo', b.stopping ? 0 : busy, b.stopping ? 'stopped' : 'running', now()).run();
+  return c.json({ ok: true });
+});
 
 /**
  * Hands a batch of waiting uploads to one service instance. A single

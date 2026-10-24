@@ -213,6 +213,25 @@ console.log('\nprocessing service\n');
     .some((col: any) => /lat|lon|place|gps|meta/.test(col.name)));
 }
 
+console.log('\nservice status\n');
+{
+  const status = async () => (await w.call('GET', '/admin/inbox/summary')).json.runners;
+  check('no service has checked in yet', (await status()).length === 0);
+  const hb = await w.call('POST', '/admin/inbox/heartbeat', {
+    auth: service, body: { runner: 'laptop', kinds: ['photo', 'video'], busy: 3 },
+  });
+  let r = (await status())[0];
+  check('a checked-in service is reported online, with what it takes', hb.status === 200 && r.online === true &&
+    r.name === 'laptop' && r.kinds.join() === 'photo,video' && r.busy === 3, JSON.stringify(r));
+  w.sqlite.prepare(`UPDATE runners SET last_seen = last_seen - 61`).run();
+  r = (await status())[0];
+  check('one that has not checked in for a minute is offline', r.online === false);
+  await w.call('POST', '/admin/inbox/heartbeat', { auth: service, body: { runner: 'laptop', kinds: ['photo'] } });
+  await w.call('POST', '/admin/inbox/heartbeat', { auth: service, body: { runner: 'laptop', kinds: ['photo'], stopping: true } });
+  r = (await status())[0];
+  check('one that checked out is offline at once', r.online === false && r.busy === 0);
+}
+
 console.log('\nwithout R2 keys\n');
 {
   const bare = makeWorld({ s3: false });

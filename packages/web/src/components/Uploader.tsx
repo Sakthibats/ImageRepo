@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { adminApi, type Runner } from '../admin.ts';
 import { supported, uploadFiles, watchProcessing, type UploadState } from '../upload.ts';
 
 type Phase =
@@ -22,6 +23,21 @@ export function Uploader({ albumId, folder, onProgress, onDone }: {
 
   const busy = phase.kind !== 'idle';
   const uploading = phase.kind === 'uploading';
+
+  // Whether a processing service is running: checked on open and every 30s
+  // while idle; the processing phase gets it from its own polling.
+  const [runners, setRunners] = useState<Runner[] | null>(null);
+  useEffect(() => {
+    if (phase.kind === 'processing') return;
+    let stopped = false;
+    const check = () => {
+      if (document.visibilityState !== 'visible') return;
+      adminApi.inboxSummary(albumId).then((s) => { if (!stopped) setRunners(s.runners); }).catch(() => {});
+    };
+    check();
+    const t = setInterval(check, 30_000);
+    return () => { stopped = true; clearInterval(t); };
+  }, [albumId, phase.kind]);
 
   // Leaving mid-upload loses only the file in flight (picking again resumes),
   // but say so; and keep a phone's screen on, since a locked phone stops sending.
@@ -50,8 +66,9 @@ export function Uploader({ albumId, folder, onProgress, onDone }: {
     let failedProcessing: { name: string; error: string }[] = [];
     if (state.sent) {
       setPhase({ kind: 'processing', left: state.sent, total: state.sent, upload: state });
-      await watchProcessing(albumId, (left, failed) => {
+      await watchProcessing(albumId, (left, { failed, runners }) => {
         if (!live.current) return;
+        setRunners(runners);
         if (left < seen && seen !== Infinity) onProgress();
         seen = left;
         // The summary covers the whole album; keep to this upload's files.
@@ -98,6 +115,7 @@ export function Uploader({ albumId, folder, onProgress, onDone }: {
           <div className="bar"><div className="bar-fill"
             style={{ width: `${((phase.total - phase.left) / Math.max(phase.total, 1)) * 100}%` }} /></div>
           <div className="muted small">Uploaded. Photos appear as they are ready; this page can be closed.</div>
+          <ServiceStatus runners={runners} waiting />
         </>
       )}
       {phase.kind === 'idle' && (
@@ -108,6 +126,7 @@ export function Uploader({ albumId, folder, onProgress, onDone }: {
           <div className="muted small">
             {phase.result ?? 'Drop them here or click to choose · sent at full size, resized on the server'}
           </div>
+          <ServiceStatus runners={runners} />
           {phase.problems && phase.problems.length > 0 && (
             <details className="small" onClick={(e) => e.stopPropagation()}>
               <summary>What was not added</summary>
@@ -120,6 +139,41 @@ export function Uploader({ albumId, folder, onProgress, onDone }: {
       )}
     </div>
   );
+}
+
+/**
+ * Whether anything will process an upload now. Uploads are accepted either
+ * way; they wait in storage until a service runs.
+ */
+function ServiceStatus({ runners, waiting }: { runners: Runner[] | null; waiting?: boolean }) {
+  if (!runners) return null;
+  const online = runners.filter((r) => r.online);
+  if (online.length) {
+    const kinds = new Set(online.flatMap((r) => r.kinds));
+    const takes = kinds.has('photo') && kinds.has('video') ? 'photos and videos'
+      : kinds.has('video') ? 'videos only' : 'photos only';
+    return (
+      <div className="service ok small">
+        <span className="dot" />Processing service running on {online.map((r) => r.name).join(', ')} · {takes}
+      </div>
+    );
+  }
+  const last = runners[0];
+  return (
+    <div className="service off small">
+      <span className="dot" />
+      Processing service is not running{last ? ` (last seen on ${last.name} ${ago(last.lastSeen)})` : ''}.{' '}
+      {waiting ? 'These will be processed once it starts' : 'Uploads will wait until it starts'}:{' '}
+      <code>python -m preprocessing run</code>
+    </div>
+  );
+}
+
+function ago(epochSeconds: number): string {
+  const s = Math.max(0, Date.now() / 1000 - epochSeconds);
+  if (s < 3600) return `${Math.max(1, Math.round(s / 60))} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} days ago`;
 }
 
 function Uploading({ s }: { s: UploadState }) {

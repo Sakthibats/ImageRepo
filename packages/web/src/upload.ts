@@ -250,7 +250,7 @@ export async function uploadFiles(
  */
 export async function watchProcessing(
   albumId: string,
-  onUpdate: (left: number, failed: InboxSummary['failed']) => void,
+  onUpdate: (left: number, summary: InboxSummary) => void,
   stopped: () => boolean,
   api: Pick<Api, 'summary'> = defaultApi,
 ): Promise<void> {
@@ -258,7 +258,7 @@ export async function watchProcessing(
     try {
       const s = await api.summary(albumId);
       const left = (s.counts.ready ?? 0) + (s.counts.claimed ?? 0);
-      onUpdate(left, s.failed);
+      onUpdate(left, s);
       if (!left) return;
     } catch { /* a blip; ask again */ }
     await sleep(3000);

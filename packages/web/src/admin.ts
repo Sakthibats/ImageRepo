@@ -124,7 +124,11 @@ export interface InboxSummary {
   counts: Partial<Record<'uploading' | 'ready' | 'claimed' | 'failed', number>>;
   maxAttempts: number;
   failed: { id: string; orig_name: string; error: string; attempts: number }[];
+  /** Processing services seen in the last week, most recent first. */
+  runners: Runner[];
 }
+
+export interface Runner { name: string; kinds: string[]; busy: number; lastSeen: number; online: boolean }
 
 export const shareState = (s: ShareRow): 'active' | 'revoked' | 'expired' => {
   if (s.revoked) return 'revoked';

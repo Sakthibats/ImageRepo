@@ -23,6 +23,8 @@ RECORDS_PER_CALL = 20
 # when it lapses. A long video transcode must finish well inside its lease.
 PHOTO_LEASE = 15 * 60
 VIDEO_LEASE = 4 * 3600
+# The app shows the service as offline after a minute without one of these.
+HEARTBEAT_SECONDS = 20
 
 
 def content_id(path: Path) -> str:
@@ -37,6 +39,21 @@ def content_id(path: Path) -> str:
 class Runner:
     def __init__(self, cfg: Config, api: WorkerApi, r2: R2, stages: dict[str, list[Stage]] = STAGES):
         self.cfg, self.api, self.r2, self.stages = cfg, api, r2, stages
+        self.busy = 0
+
+    def heartbeat(self, done: threading.Event) -> None:
+        """Checks in until `done`, then checks out, so the app knows at once."""
+        while True:
+            try:
+                self.api.heartbeat(self.cfg.kinds, self.busy)
+            except Exception as e:
+                log.warning('heartbeat failed: %s', e)
+            if done.wait(HEARTBEAT_SECONDS):
+                break
+        try:
+            self.api.heartbeat(self.cfg.kinds, 0, stopping=True)
+        except Exception as e:
+            log.warning('could not check out: %s', e)
 
     def process(self, item: dict[str, Any]) -> dict[str, Any]:
         """Every stage for one upload; returns the record for the Worker."""
@@ -69,6 +86,16 @@ class Runner:
     def run(self, stop: threading.Event, once: bool = False) -> int:
         """Works until `stop` is set or, with `once`, until the queue is empty.
         Returns how many files were processed."""
+        done = threading.Event()
+        beat = threading.Thread(target=self.heartbeat, args=(done,), name='heartbeat', daemon=True)
+        beat.start()
+        try:
+            return self.work(stop, once)
+        finally:
+            done.set()
+            beat.join(timeout=10)
+
+    def work(self, stop: threading.Event, once: bool) -> int:
         # A couple more claimed than running, so a thread that frees up starts
         # on the next download at once.
         target = self.cfg.concurrency + 2
@@ -101,6 +128,7 @@ class Runner:
                         # The queue is empty; do not ask again for a while.
                         next_claim = time.monotonic() + self.cfg.poll_seconds
 
+                self.busy = len(inflight)
                 if not inflight:
                     self.flush(records, failures)
                     if stop.is_set() or once:
