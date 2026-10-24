@@ -1,4 +1,4 @@
-import type { AlbumManifest, OwnerManifestItem } from '@imagerepo/shared';
+import type { AlbumManifest, FolderSummary, OwnerManifestItem } from '@imagerepo/shared';
 
 export interface AlbumSummary {
   id: string; title: string; n: number;
@@ -22,7 +22,7 @@ export const fetchIndex = () =>
   get<{ ver: string; albums: AlbumSummary[] }>('/a/manifest/index');
 
 export const fetchAlbum = (id: string, ver: string) =>
-  get<AlbumManifest & { items: OwnerManifestItem[] }>(`/a/manifest/album/${id}/${ver}`);
+  get<AlbumManifest & { items: OwnerManifestItem[]; folders?: FolderSummary[] }>(`/a/manifest/album/${id}/${ver}`);
 
 export const assetUrl = (id: string, variant: string) => `/a/${id}/${variant}`;
 

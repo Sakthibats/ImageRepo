@@ -1,10 +1,12 @@
-import type { ManifestItem } from '@imagerepo/shared';
+import type { FolderSummary, ManifestItem } from '@imagerepo/shared';
 
 export type GuestItem = ManifestItem & { t2: string };
 
 export interface GuestAlbum {
   album: string; title: string; count: number;
   items: GuestItem[]; allowDownload: boolean;
+  /** Only the folders this link shares, most recent first. */
+  folders?: FolderSummary[];
 }
 
 /** /s/<token> -> the token, or null when this is the owner app. */

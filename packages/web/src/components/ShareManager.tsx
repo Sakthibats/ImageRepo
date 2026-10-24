@@ -1,5 +1,63 @@
 import { useEffect, useState } from 'react';
-import { adminApi, shareState, type ShareRow } from '../admin.ts';
+import { adminApi, shareState, type ShareRow, type ShareScope } from '../admin.ts';
+
+type FolderCount = { id: string; title: string; n: number };
+
+const scopeValid = (s: ShareScope) => s.scope === 'all' || s.folderIds.length > 0 || s.includeLoose;
+
+/** How a link's scope reads in the list. */
+function describeScope(s: ShareRow): string {
+  if (s.scope === 'all') return 'Everything';
+  const parts = s.folders.map((f) => f.title);
+  if (s.include_loose) parts.push('loose photos');
+  return parts.length ? parts.join(', ') : 'Nothing (its folders were deleted)';
+}
+
+/**
+ * Whole album, or a chosen set of folders. A folder added to the album later
+ * is shared only by "Everything" links; others must have it ticked.
+ */
+function ScopePicker({ folders, loose, value, onChange }: {
+  folders: FolderCount[]; loose: number; value: ShareScope; onChange: (s: ShareScope) => void;
+}) {
+  const chosen = value.scope === 'folders' ? value : null;
+  const toggle = (id: string) => chosen && onChange({
+    ...chosen,
+    folderIds: chosen.folderIds.includes(id) ? chosen.folderIds.filter((x) => x !== id) : [...chosen.folderIds, id],
+  });
+  return (
+    <fieldset className="scope">
+      <legend>What this link shows</legend>
+      <label className="field check">
+        <input type="radio" checked={!chosen} onChange={() => onChange({ scope: 'all' })} />
+        <span>Everything in this album <span className="muted">· including folders added later</span></span>
+      </label>
+      <label className="field check">
+        <input type="radio" checked={Boolean(chosen)}
+               onChange={() => onChange({ scope: 'folders', folderIds: [], includeLoose: false })} />
+        <span>Only the folders I choose</span>
+      </label>
+      {chosen && (
+        <div className="scope-list fade-in">
+          {folders.map((f) => (
+            <label key={f.id} className="field check">
+              <input type="checkbox" checked={chosen.folderIds.includes(f.id)} onChange={() => toggle(f.id)} />
+              <span>{f.title} <span className="muted">· {f.n}</span></span>
+            </label>
+          ))}
+          {loose > 0 && (
+            <label className="field check">
+              <input type="checkbox" checked={chosen.includeLoose}
+                     onChange={(e) => onChange({ ...chosen, includeLoose: e.target.checked })} />
+              <span>Loose photos, not in any folder <span className="muted">· {loose}</span></span>
+            </label>
+          )}
+          <p className="muted small">Folders you add later stay private until you tick them here.</p>
+        </div>
+      )}
+    </fieldset>
+  );
+}
 
 export function ShareManager({ albumId, albumTitle, onClose }: {
   albumId: string; albumTitle: string; onClose: () => void;
@@ -15,12 +73,32 @@ export function ShareManager({ albumId, albumTitle, onClose }: {
   const [days, setDays] = useState('');
   const [passcode, setPasscode] = useState('');
   const [allowDownload, setAllowDownload] = useState(true);
+  const [scope, setScope] = useState<ShareScope>({ scope: 'all' });
+  const [folders, setFolders] = useState<FolderCount[]>([]);
+  const [loose, setLoose] = useState(0);
+  const [editing, setEditing] = useState<{ tokenHash: string; scope: ShareScope } | null>(null);
 
   const load = () => adminApi.shares()
     .then((d) => setShares(d.shares.filter((s) => s.album_id === albumId)))
     .catch((e) => setError(e.message));
 
-  useEffect(() => { void load(); }, [albumId]);
+  useEffect(() => {
+    void load();
+    adminApi.folders(albumId)
+      .then((d) => { setFolders(d.folders); setLoose(d.loose); })
+      .catch((e) => setError(e.message));
+  }, [albumId]);
+
+  const saveScope = async () => {
+    if (!editing) return;
+    setBusy(true); setError(null);
+    try {
+      await adminApi.setShareScope(editing.tokenHash, editing.scope);
+      setEditing(null);
+      await load();
+    } catch (e) { setError((e as Error).message); }
+    setBusy(false);
+  };
 
   const create = async () => {
     setBusy(true); setError(null);
@@ -31,9 +109,10 @@ export function ShareManager({ albumId, albumTitle, onClose }: {
         expiresInDays: days ? Number(days) : undefined,
         passcode: passcode.trim() || undefined,
         allowDownload,
+        ...scope,
       });
       setMinted(r.url);
-      setLabel(''); setDays(''); setPasscode('');
+      setLabel(''); setDays(''); setPasscode(''); setScope({ scope: 'all' });
       await load();
     } catch (e) { setError((e as Error).message); }
     setBusy(false);
@@ -93,8 +172,12 @@ export function ShareManager({ albumId, albumTitle, onClose }: {
           </label>
         </div>
 
+        {folders.length > 0 && (
+          <ScopePicker folders={folders} loose={loose} value={scope} onChange={setScope} />
+        )}
+
         <div className="modal-actions">
-          <button className="btn primary" onClick={create} disabled={busy}>
+          <button className="btn primary" onClick={create} disabled={busy || !scopeValid(scope)}>
             {busy ? 'Creating…' : 'Create link'}
           </button>
         </div>
@@ -114,6 +197,7 @@ export function ShareManager({ albumId, albumTitle, onClose }: {
                       <span className={`pill ${state}`}>{state}</span>
                       <span className="share-label">{s.label || '(no label)'}</span>
                     </div>
+                    <div className="share-scope small">Shows: {describeScope(s)}</div>
                     <div className="muted small">
                       {s.view_count} views
                       {s.has_passcode ? ' · passcode' : ''}
@@ -121,10 +205,33 @@ export function ShareManager({ albumId, albumTitle, onClose }: {
                       {s.expires_at ? ` · expires ${new Date(s.expires_at * 1000).toLocaleDateString()}` : ''}
                     </div>
                     {state === 'active' && (
-                      <button className="btn danger small"
-                              onClick={async () => { await adminApi.revokeShare(s.token_hash); void load(); }}>
-                        Revoke
-                      </button>
+                      <div className="row-gap share-actions">
+                        {(folders.length > 0 || s.scope === 'folders') && editing?.tokenHash !== s.token_hash && (
+                          <button className="btn small" onClick={() => setEditing({
+                            tokenHash: s.token_hash,
+                            scope: s.scope === 'all' ? { scope: 'all' }
+                              : { scope: 'folders', folderIds: s.folders.map((f) => f.id), includeLoose: Boolean(s.include_loose) },
+                          })}>
+                            Change folders
+                          </button>
+                        )}
+                        <button className="btn danger small"
+                                onClick={async () => { await adminApi.revokeShare(s.token_hash); void load(); }}>
+                          Revoke
+                        </button>
+                      </div>
+                    )}
+                    {editing?.tokenHash === s.token_hash && (
+                      <div className="share-edit fade-in">
+                        <ScopePicker folders={folders} loose={loose} value={editing.scope}
+                                     onChange={(scope) => setEditing({ ...editing, scope })} />
+                        <p className="muted small">The link stays the same; guests see the change on their next visit.</p>
+                        <div className="row-gap">
+                          <button className="btn primary small" disabled={busy || !scopeValid(editing.scope)}
+                                  onClick={() => void saveScope()}>Save</button>
+                          <button className="btn small" onClick={() => setEditing(null)}>Cancel</button>
+                        </div>
+                      </div>
                     )}
                   </li>
                 );

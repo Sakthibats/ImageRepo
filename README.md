@@ -2,171 +2,236 @@
 
 A private photo and video library on Cloudflare R2 + D1, with revocable share links.
 
-- **Private by default.** The full library and every write route sits behind Cloudflare Access.
+- **Private by default.** The library and every write route sit behind Cloudflare Access.
 - **Share links** are unguessable, revocable, optionally passcoded and expiring. No login for viewers.
-- **Location stays in the database.** GPS is read at ingest and stored in D1. It is
-  removed from JPEG and video originals before upload, and never written into
-  anything a guest receives. See [How media is treated](#how-media-is-treated) for
-  the formats this does not yet cover.
+- **Full quality.** Files go up exactly as picked, from a phone or a laptop.
+- **Location stays in the database.** GPS is read on the way in and stored in D1. It is
+  removed from every original kept in R2 without touching a pixel, and never sent to a guest.
 
-## Layout
+## How it works
 
+```mermaid
+flowchart LR
+  Owner["You, in a browser<br/>(phone or laptop)"]
+  Guest["Someone with<br/>a share link"]
+  Service["Preprocessing service<br/>strip, resize, record<br/>(your laptop, or any server)"]
+
+  subgraph cf["Cloudflare"]
+    Access{{"Cloudflare Access"}}
+    Worker["Worker<br/>API + web app"]
+    D1[("D1<br/>metadata")]
+    R2[("R2<br/>files")]
+  end
+
+  Owner -- "files, straight to storage" --> R2
+  Owner -- "signs in" --> Access
+  Service -- "service token" --> Access
+  Service <-- "download inbox/, upload results" --> R2
+  Guest -- "/s/... links skip the login" --> Access
+  Access --> Worker
+  Worker --> D1
+  Worker --> R2
 ```
-packages/
-  shared/    types + R2 key layout shared by the CLI, Worker and web app
-  ingest/    local CLI: scan, derive, strip, upload, manage share links
-  worker/    Cloudflare Worker: admin API, asset serving, guest share routes
-  web/       React + Vite app, built to dist/ and served by the Worker
-schema.sql   D1 schema
-migrations/  D1 changes applied after schema.sql
+
+### Adding photos and videos
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant B as Browser
+  participant W as Worker
+  participant R2
+  participant S as Preprocessing service
+
+  B->>B: hash each picked file
+  B->>W: /admin/inbox/start (25 at a time)
+  W-->>B: already in the library, or presigned upload URLs
+  B->>R2: PUT inbox/<id>.<ext>, 6 at a time, large files in parts
+  B->>W: /admin/inbox/finish
+  S->>W: /admin/inbox/claim
+  S->>R2: download, check the hash, run the stages, upload orig/ drv/ post/ prev/
+  S->>W: /admin/inbox/complete (GPS included, for D1)
+  W->>R2: new album manifest; delete the inbox copy
 ```
 
-One Worker serves both the API and the web app, so the Cloudflare Access cookie
-covers both. Its routes:
+- Open an album (or a folder in it) and pick files; they are filed there. A file the
+  library already has is not uploaded again, only filed into this album.
+- Picking the same files again after an interruption resumes: only the parts R2 is
+  missing are sent.
+- Photos appear as they are processed, within seconds. Once uploading finishes, the
+  page can be closed.
+- The uploader says whether a processing service is running. If none is, uploads still
+  go in and wait in storage (seven days at most) until one starts.
 
-| Path | Who | What |
+The service runs each file through **stages**, each with a name and a version:
+
+| | Stages | Writes |
 |---|---|---|
-| `/admin/*` | owner | ingest, uploads, album/media/tag writes, share-link management |
-| `/a/*` | owner | manifests, media, timeline, tags, search |
-| `/s/:token` | guests | one shared album, no login |
-| everything else | owner | the web app |
+| Photo | `exif` → `original` → `derivatives` | `orig/<id>.<ext>`, `drv/<id>/{320,1024,2048}.avif` |
+| Video | `probe` → `original` → `poster` → `preview` | `orig/<id>.mp4`, `post/<id>.jpg`, `drv/` from the poster, `prev/<id>.mp4` (HEVC only) |
+
+D1 records which stages each item has done (`media_stages`), so a new stage, such as
+faces, or a new version of one, has a ready-made backlog. See `Preprocessing/README.md`.
+
+### Who can reach what
+
+| Caller | Gets past Access with | The Worker then checks | Can use |
+|---|---|---|---|
+| You, in a browser | your Access login | the Access JWT's signature | everything, including purge |
+| Preprocessing service | its own Access service token | the JWT, and that its token is held to its routes | health, inbox claim/complete/fail/heartbeat/summary, stages |
+| A guest | nothing (`/s` bypasses Access) | share token, passcode, signed session cookie, a tag per image, the link's folder scope | `/s/:token` only |
+
+Purging needs a person: a JWT carrying an email. `ADMIN_TOKEN` (a bearer for scripts and
+local development) and service tokens are refused.
+
+### Where data lives
+
+**R2** keys are built from the file's content hash, the first 32 hex characters of its
+SHA-256. The same file always gets the same key, so a duplicate is stored once, a key's
+content never changes, and browsers cache it forever.
+
+| Key | What |
+|---|---|
+| `inbox/<id>.<ext>` | an upload as sent, location included; never served, deleted once processed |
+| `orig/<id>.<ext>` | the original, metadata removed (videos as MP4) |
+| `drv/<id>/320.avif`, `1024`, `2048` | resized copies for the grid, tablets and the lightbox |
+| `post/<id>.jpg`, `prev/<id>.mp4` | a video's poster frame; a 720p H.264 preview for HEVC |
+| `man/album/<album>.owner.<ver>.json`, `man/index.owner.current.json` | baked album lists the app reads |
+
+**D1** holds the relationships:
+
+```mermaid
+erDiagram
+  albums ||--o{ album_media : holds
+  media ||--o{ album_media : "filed as"
+  albums ||--o{ folders : has
+  folders |o--o{ album_media : groups
+  albums ||--o{ share_links : "shared by"
+  share_links ||--o{ share_folders : "limited to"
+  media ||--o{ media_tags : tagged
+  media ||--o{ media_stages : "processed by"
+  albums ||--o{ uploads : "waiting for"
+
+  media {
+    text id PK "content hash"
+    real lat "owner only"
+    real lon "owner only"
+    text raw_meta "all camera metadata, owner only"
+  }
+  album_media {
+    text folder_id FK "null means loose"
+  }
+```
+
+A photo can be in several albums, and in at most one folder of each (folders are one
+level deep). Filing a photo changes one `album_media` row; nothing in R2 moves. Any change
+to an album re-bakes its manifest under a new version, which the app then loads.
+
+### Sharing
+
+A link shows the whole album (including folders added later) or chosen folders, with or
+without the loose photos. Guests see only what their link shares; other folders' names
+are never sent, and nor are location fields.
+
+```mermaid
+sequenceDiagram
+  participant G as Guest browser
+  participant W as Worker
+  participant D1
+  G->>W: GET /s/<token>, then POST /s/<token>/session (passcode if set)
+  W->>D1: sha256(token): revoked? expired? what does it share?
+  W-->>G: items without location, a signed tag per item, a 12-hour cookie
+  G->>W: GET /s/<token>/a/<id>/1024?t=<tag>
+  W->>D1: is the link still live, and the item still shared?
+  W-->>G: image
+```
+
+- Only the SHA-256 of a link's token is stored; the URL is shown once.
+- Every image request is checked against the link, so revoking it or taking a folder
+  out applies at once.
 
 ## Setup
 
-Requires Node 20+, and `ffmpeg`/`ffprobe` on the machine that runs the CLI.
+Needs Node 20+, and for the service Python 3.12 and ffmpeg (`brew install python@3.12 ffmpeg`).
 
 ```bash
 npm install
-
-# Cloudflare resources — run these from packages/worker, where wrangler.toml lives
 cd packages/worker
-npx wrangler d1 create imagerepo        # put the id in wrangler.toml
+npx wrangler d1 create imagerepo                 # put the id in wrangler.toml
 npx wrangler r2 bucket create imagerepo
 npx wrangler d1 execute imagerepo --file=../../schema.sql --remote
-npx wrangler d1 execute imagerepo --file=../../migrations/001_drv_ext.sql --remote
-npx wrangler d1 execute imagerepo --file=../../migrations/002_tags.sql --remote
-
-# Worker secrets
-npx wrangler secret put ADMIN_TOKEN     # bearer token the CLI presents
-npx wrangler secret put SHARE_HMAC_KEY  # signs guest sessions and asset URLs
+npx wrangler secret put ADMIN_TOKEN              # bearer for scripts and local dev
+npx wrangler secret put SHARE_HMAC_KEY           # signs guest sessions and asset URLs
+npx wrangler secret put R2_ACCESS_KEY_ID         # an R2 API token (Object Read & Write),
+npx wrangler secret put R2_SECRET_ACCESS_KEY     #   used to sign upload URLs
+npx wrangler r2 bucket cors set imagerepo --file r2-cors.json        # set your app's origin in it first
+npx wrangler r2 bucket lifecycle add imagerepo inbox-expiry inbox/ --expire-days 7
 cd ../..
-
-# Build the web app, then deploy the Worker that serves it
-npm run -w @imagerepo/web build
-npm run worker:deploy
+npm run deploy
 ```
 
-Then put Cloudflare Access in front of the Worker's hostname:
+In `wrangler.toml`, set `R2_ACCOUNT_ID`, and from Cloudflare Access:
 
-1. Create an Access application for the hostname with a policy that allows only you.
-   Set `ACCESS_TEAM` and `ACCESS_AUD` in `packages/worker/wrangler.toml` from it.
-2. Add a second, path-scoped application for `/s` with a **Bypass** policy, so
-   share links work without a login.
-3. Create a service token (Zero Trust > Access > Service Auth) so the CLI can get
-   past Access.
+1. An Access application for the Worker's hostname, allowing only you: `ACCESS_TEAM`, `ACCESS_AUD`.
+2. A second, path-scoped application for `/s` with a **Bypass** policy, so share links need no login.
+3. A service token for the processing service, added to a **Service Auth** policy on the first
+   application. Its Client ID goes in `PREPROCESS_CLIENT_ID`.
 
-Finally, configure the CLI:
+Then the service:
 
 ```bash
-cp .env.ingest.example .env.ingest      # R2 keys, Worker URL, ADMIN_TOKEN, service token
-npm run ingest -- doctor                # check tooling + connectivity
+cd Preprocessing
+cp env.example .env                              # the service token, the R2 key pair
+python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
+.venv/bin/python -m preprocessing doctor
+.venv/bin/python -m preprocessing run            # or: docker compose up --build -d
 ```
 
-## Ingesting a library
-
-Run the CLI from the repo root; it reads `.env.ingest` and keeps its ledger in
-`.ingest/state.db`, both relative to the current directory.
+## Deploying
 
 ```bash
-npm run ingest -- scan ~/Photos                         # see what would be ingested
-npm run ingest -- process ~/Photos --dry-run --limit 50
-npm run ingest -- process ~/Photos                      # the real run
-npm run ingest -- status
+npm run deploy                  # typecheck + tests, new migrations (asks), web build, deploy, smoke test
+npm run deploy -- --dry-run     # what would change; changes nothing
+npm run migrate:local           # new migrations into the local dev database
 ```
 
-| Command | What it does |
-|---|---|
-| `scan <root>` | Walk the folder and list albums and sizes. Touches nothing. |
-| `process <root>` | Hash, derive, strip metadata, upload to R2, record in D1. |
-| `flush` | Send metadata held locally because the Worker was unreachable. |
-| `bake [album]` | Regenerate album manifests. |
-| `share create\|list\|revoke\|albums` | Manage share links. |
-| `status` | Show progress from the local ledger. |
-| `doctor` | Check tooling and cloud connectivity. |
-
-Folders become albums: by default the first folder level under the root is the
-album, and `--album-depth` changes that. Files loose at the root go to `unsorted`.
-
-Runs are resumable. Each file's progress is committed to the ledger as it
-happens, a file's id is the hash of its bytes so duplicates are skipped, and
-re-running `process` retries only what is pending or failed.
+Migrations run before the new Worker and only ever add, so the running Worker keeps
+working while they apply. The service is not part of a deploy: restart it to pick up
+changes.
 
 ## The web app
 
-Open the Worker's hostname and sign in through Access.
+- **Photos** is a timeline of the whole library; **Albums** and **Tags** organise it.
+- In an album: **New folder**, select photos and **Move to folder…**, **Set as cover…**,
+  **Share**. Uploads made while a folder is open go into it.
+- Deleting an album keeps its photos unless you tick **Also delete its photos**; photos
+  in another album are kept either way.
+- **Settings** has **Purge everything**: every file, album, tag and share link, no undo,
+  confirmed by typing `purge everything`, and only when signed in through Access.
 
-- **Photos** is a timeline of the whole library by date.
-- **Albums** lets you create, rename, delete and share albums, and move or copy
-  items between them.
-- **Tags** lets you tag selected items and browse or search by tag.
-- Inside an album you can drop photos to upload them from the browser.
-
-For local development, `npm run -w @imagerepo/web dev` starts Vite and proxies
-`/a` and `/admin` to the deployed Worker. `npm run worker:dev` runs the Worker
-locally.
-
-## Share links
-
-Create one from an album's Share button, or from the CLI:
-
-```bash
-npm run ingest -- share create goa-2023 --label "sent to mum" --days 30 --passcode hunter2
-npm run ingest -- share list
-npm run ingest -- share revoke <token-hash-prefix>
-```
-
-- The URL is shown once. Only its SHA-256 is stored, so a database dump exposes
-  no live link; if you lose it, revoke and create another.
-- `--no-download` lets viewers browse without downloading originals.
-- A guest can load only media from the album their link grants.
-- Revoking blocks the album listing immediately. Asset URLs already handed out
-  keep working for up to an hour.
+For local development, `npm run -w @imagerepo/web dev` starts Vite and proxies `/a` and
+`/admin` to the deployed Worker; `npm run worker:dev` runs the Worker locally.
 
 ## How media is treated
 
-Ingested with the CLI:
-
-| | stored in R2 | GPS | notes |
+| | In R2 | GPS | How |
 |---|---|---|---|
-| JPEG original | yes | removed | EXIF, XMP and IPTC segments dropped; pixels bit-identical, ICC profile kept |
-| HEIC / PNG original | yes | **kept** | uploaded byte-for-byte; no stripper for these formats yet |
-| AVIF derivatives (320/1024/2048) | yes | n/a | re-encoded, never carries metadata |
-| Video original (MP4/MOV/M4V) | yes, as MP4 | removed | lossless remux, `-map_metadata -1`, faststart |
-| Video poster | yes | n/a | frame grab, then the photo pipeline |
-| Video preview (720p) | if needed | n/a | only for non-H.264, or `--preview-all-video` |
+| JPEG / PNG / HEIC original | yes | removed | EXIF, XMP and IPTC dropped losslessly; pixels and colour profile unchanged |
+| Video original (MP4/MOV/M4V) | as MP4 | removed | remuxed with every tag dropped, streams copied, rotation kept |
+| AVIF derivatives, video poster | yes | n/a | re-encoded with no metadata |
+| HEVC video preview | yes | n/a | 720p H.264 (hardware on a Mac) |
+| Other formats (WebP, RAW…) | refused | | a format that cannot be cleaned is never stored |
 
-Pass `--preserve-original` to upload byte-exact originals instead, keeping GPS
-in R2. Only do this if R2 is meant to be your archival copy.
-
-Uploaded from the browser:
-
-| | stored in R2 | GPS | notes |
-|---|---|---|---|
-| "Original" | yes | removed | re-encoded JPEG, at most 4096px wide; the source file is not kept |
-| WebP derivatives (320/1024/2048) | yes | n/a | rendered in canvas |
-
-Browser upload is for photos only, records no EXIF (the date is the file's
-modified time), and is not an archival copy. Use the CLI for video, bulk
-backfill, and anything you want stored at full quality.
+Everything the camera wrote is kept in D1 (`media.raw_meta`), owner-side only.
 
 ## Tests
 
 ```bash
-npm run -w @imagerepo/ingest test
+npm run -w @imagerepo/worker test     # Worker, in Node: D1 as SQLite, R2 as a map, a fake S3 endpoint
+(cd Preprocessing && .venv/bin/pytest)
 ```
 
-`test/strip.test.ts` asserts GPS removal is lossless and that ICC profiles survive.
-`test/video.test.ts` asserts the remux drops location while frames stay bit-identical.
-
-The Worker and web app have no tests yet; `npm run -w @imagerepo/worker typecheck`
-and the web build's `tsc` step are the only checks there.
+- Worker: purge, folders, share scope, the inbox routes, and the web app's uploader run
+  end to end against them (resume, stale URLs, duplicates).
+- Preprocessing: strippers and ThumbHash byte-for-byte against recorded outputs, GPS
+  removal, rotation, derivatives with no metadata, video remux, the claim loop.

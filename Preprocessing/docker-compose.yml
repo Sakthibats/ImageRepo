@@ -1,0 +1,7 @@
+services:
+  preprocessing:
+    build: .
+    env_file: .env
+    restart: unless-stopped
+    # Stopping waits for the files in hand to finish (SIGTERM, then this long).
+    stop_grace_period: 2m

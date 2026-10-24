@@ -3,7 +3,9 @@ import type { Env } from './types.js';
 import type { ManifestItem } from '@imagerepo/shared';
 import {
   lookupShare, verifyPasscode, signSession, verifySession, assetTag, verifyAssetTag,
+  IN_SCOPE, FOLDER_IN_SCOPE,
 } from './share.js';
+import { summariseFolders, type FolderRow, type MemberRow } from './manifest.js';
 
 /**
  * Guest routes. These must be reachable WITHOUT Cloudflare Access, so the
@@ -11,7 +13,8 @@ import {
  *
  * Nothing here trusts the client beyond the share token and the HMAC tags the
  * server itself issued. Guests cannot enumerate: every asset request proves
- * the media id was part of the album this token grants.
+ * the media id was part of the album this token grants, and D1 confirms it is
+ * still within the folders the link shares.
  */
 export const guest = new Hono<{ Bindings: Env }>({ strict: false });
 
@@ -49,23 +52,35 @@ guest.post('/:token/session', async (c) => {
     ).bind(Math.floor(Date.now() / 1000), share.token_hash).run(),
   );
 
-  const payload = await buildGuestManifest(c.env, share.album_id, session.s);
+  const payload = await buildGuestManifest(c.env, share.token_hash, share.album_id, session.s);
 
   c.header('set-cookie',
     `${COOKIE}=${cookie}; Path=/s/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_TTL}`);
   return c.json({ ...payload, allowDownload: session.d }, 200, noStore);
 });
 
-async function buildGuestManifest(env: Env, albumId: string, shareId: string) {
+async function buildGuestManifest(env: Env, tokenHash: string, albumId: string, shareId: string) {
   const album = await env.DB.prepare(`SELECT id, title FROM albums WHERE id = ?1`)
     .bind(albumId).first<{ id: string; title: string }>();
 
+  // Only what this link shares: its folders, and the loose photos if it says so.
   const { results } = await env.DB.prepare(`
-    SELECT m.id, m.kind, m.width, m.height, m.taken_at, m.thumbhash, m.duration_ms, m.caption
-    FROM album_media am JOIN media m ON m.id = am.media_id
-    WHERE am.album_id = ?1
+    SELECT m.id, m.kind, m.width, m.height, m.taken_at, m.thumbhash, m.duration_ms, m.caption,
+           am.folder_id
+    FROM share_links s
+    JOIN album_media am ON am.album_id = s.album_id
+    JOIN media m ON m.id = am.media_id
+    WHERE s.token_hash = ?1 AND ${IN_SCOPE}
     ORDER BY COALESCE(m.taken_at, 0), m.id
-  `).bind(albumId).all();
+  `).bind(tokenHash).all();
+
+  // Names of folders outside the link are never sent, and nor are empty ones.
+  const { results: folderRows } = await env.DB.prepare(`
+    SELECT f.id, f.title, f.cover_id
+    FROM share_links s JOIN folders f ON f.album_id = s.album_id
+    WHERE s.token_hash = ?1 AND ${FOLDER_IN_SCOPE}
+  `).bind(tokenHash).all<FolderRow>();
+  const folders = summariseFolders(folderRows, results as unknown as MemberRow[]).filter((f) => f.n > 0);
 
   // Queried column-by-column rather than SELECT *, so lat/lon/place cannot
   // reach a guest even by accident.
@@ -80,10 +95,11 @@ async function buildGuestManifest(env: Env, albumId: string, shareId: string) {
       ...(r.thumbhash ? { th: r.thumbhash } : {}),
       ...(r.duration_ms ? { d: r.duration_ms } : {}),
       ...(r.caption ? { c: r.caption } : {}),
+      ...(r.folder_id ? { f: r.folder_id } : {}),
       t2: await assetTag(env, shareId, r.id),
     });
   }
-  return { album: albumId, title: album?.title ?? albumId, count: items.length, items };
+  return { album: albumId, title: album?.title ?? albumId, count: items.length, items, folders };
 }
 
 /** Serves one asset to a guest. */
@@ -110,11 +126,20 @@ guest.get('/:token/a/:id/:variant', async (c) => {
     return c.json({ error: 'not authorised for this item' }, 403, noStore);
   }
 
-  const row = await c.env.DB
-    .prepare('SELECT id, kind, ext, drv_ext, orig_name FROM media WHERE id = ?1')
-    .bind(id)
+  // The tag proves the item was handed out; this proves the link still shares
+  // it. Revoking a link or taking a folder out of it applies here at once.
+  const row = await c.env.DB.prepare(`
+    SELECT m.id, m.kind, m.ext, m.drv_ext, m.orig_name
+    FROM share_links s
+    JOIN album_media am ON am.album_id = s.album_id AND am.media_id = ?1
+    JOIN media m ON m.id = am.media_id
+    WHERE substr(s.token_hash, 1, 16) = ?2 AND s.album_id = ?3
+      AND s.revoked = 0 AND (s.expires_at IS NULL OR s.expires_at > ?4)
+      AND ${IN_SCOPE}
+    LIMIT 1
+  `).bind(id, session.s, session.a, Math.floor(Date.now() / 1000))
     .first<{ id: string; kind: string; ext: string; drv_ext: string; orig_name: string | null }>();
-  if (!row) return c.json({ error: 'not found' }, 404, noStore);
+  if (!row) return c.json({ error: 'not authorised for this item' }, 403, noStore);
 
   const key = variant === 'orig'
     ? `orig/${row.id}.${row.kind === 'video' ? 'mp4' : row.ext}`

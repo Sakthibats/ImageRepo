@@ -14,8 +14,10 @@ import type { Env } from './types.js';
  *     the same edge cache entries. Per-session tokens would give a 0% cache
  *     hit rate.
  *
- * Revocation is immediate for the manifest and takes effect for assets within
- * one bucket window. That trade buys the cache reuse above.
+ * The tag alone is not the gate, though: every asset request also checks D1
+ * that the link is live and the item is within what the link shares. So
+ * revoking a link, or taking a folder out of it, applies to assets at once;
+ * only images already in a guest's browser cache outlive it.
  */
 
 const BUCKET_SECONDS = 3600;
@@ -137,6 +139,64 @@ export interface ShareRow {
   created_at: number; expires_at: number | null;
   passcode_hash: string | null; passcode_salt: string | null;
   allow_download: number; revoked: number; view_count: number;
+  scope: 'all' | 'folders'; include_loose: number;
+}
+
+// --------------------------------------------------------------------- scope
+
+/**
+ * True for an album_media row `am` that share link `s` shows: everything for
+ * an 'all' link, otherwise its folders and, if it says so, the loose photos.
+ * The guest manifest and the asset route both use this one definition.
+ */
+export const IN_SCOPE = `(
+  s.scope = 'all'
+  OR (am.folder_id IS NULL AND s.include_loose = 1)
+  OR am.folder_id IN (SELECT sf.folder_id FROM share_folders sf WHERE sf.token_hash = s.token_hash)
+)`;
+
+/** True for a folders row `f` whose name a guest of link `s` may see. */
+export const FOLDER_IN_SCOPE = `(
+  s.scope = 'all'
+  OR f.id IN (SELECT sf.folder_id FROM share_folders sf WHERE sf.token_hash = s.token_hash)
+)`;
+
+export interface ShareScope { scope: 'all' | 'folders'; folderIds: string[]; includeLoose: boolean }
+
+/**
+ * Reads the scope fields of a create or edit request. Folder ids must belong
+ * to the album; a link limited to folders must show something.
+ */
+export async function readScope(
+  db: D1Database, albumId: string,
+  b: { scope?: string; folderIds?: unknown; includeLoose?: unknown },
+): Promise<ShareScope | { error: string }> {
+  if (b.scope === undefined || b.scope === 'all') return { scope: 'all', folderIds: [], includeLoose: true };
+  if (b.scope !== 'folders') return { error: "scope must be 'all' or 'folders'" };
+
+  const asked = Array.isArray(b.folderIds) ? [...new Set(b.folderIds.map(String))] : [];
+  if (asked.length > 90) return { error: 'too many folders' };
+  const includeLoose = b.includeLoose === true;
+  if (!asked.length && !includeLoose) return { error: 'choose at least one folder, or the loose photos' };
+
+  if (asked.length) {
+    const { results } = await db.prepare(
+      `SELECT id FROM folders WHERE album_id = ?1 AND id IN (${asked.map((_, i) => `?${i + 2}`).join(',')})`
+    ).bind(albumId, ...asked).all<{ id: string }>();
+    if (results.length !== asked.length) return { error: 'a chosen folder is not in this album' };
+  }
+  return { scope: 'folders', folderIds: asked, includeLoose };
+}
+
+/** Statements that make a link's stored scope match `scope`. */
+export function writeScope(db: D1Database, tokenHash: string, scope: ShareScope): D1PreparedStatement[] {
+  const add = db.prepare('INSERT INTO share_folders (token_hash, folder_id) VALUES (?1, ?2)');
+  return [
+    db.prepare('UPDATE share_links SET scope = ?2, include_loose = ?3 WHERE token_hash = ?1')
+      .bind(tokenHash, scope.scope, scope.includeLoose ? 1 : 0),
+    db.prepare('DELETE FROM share_folders WHERE token_hash = ?1').bind(tokenHash),
+    ...scope.folderIds.map((f) => add.bind(tokenHash, f)),
+  ];
 }
 
 /** Looks a share up by its plaintext token and rejects revoked/expired ones. */

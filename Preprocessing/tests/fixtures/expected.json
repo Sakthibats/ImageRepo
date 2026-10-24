@@ -1,0 +1,13 @@
+{
+  "strip": {
+    "phone.jpg": "60b15fb4802db35513041c59c8a6431b8770751f68210b5a2b8a3d1f6a70daf8",
+    "phone.png": "009a06b8124f9b5a2dcac19a51bc589978ba9484a97b4cad02621e913ff8e797",
+    "phone.heic": "cb1a3b40d43d470a8d43809bdb1513c8c2efac2fee4e4cd6c5fe3a221c925320"
+  },
+  "thumbhash": {
+    "40x30": "3wcCDYJEq4mDm7TvSrlnhpNd/7W2",
+    "30x40a": "3weCBAAHgDtrynNpiPT0X3qfaVBpd8WWCw==",
+    "100x75": "H/gBBYClJ3p3ZweIiIZoVXhga/om",
+    "1x1": "az5Wnw8I9wiIh4hwj3CI+AiIgIAICIgA"
+  }
+}

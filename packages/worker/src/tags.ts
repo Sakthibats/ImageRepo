@@ -58,24 +58,31 @@ const toItem = (r: any) => ({
 });
 
 /**
- * The whole library, newest first, cursor-paginated.
+ * The whole library by date, cursor-paginated. Oldest first unless
+ * `order=desc`.
  *
  * Served live from D1 rather than baked: it changes on every upload, and only
  * the owner ever reads it, so there is no fan-out to cache for.
  */
 tagReads.get('/timeline', async (c) => {
   const limit = Math.min(Number(c.req.query('limit') ?? 300), 500);
-  const before = Number(c.req.query('before') ?? 0);
+  const desc = c.req.query('order') === 'desc';
+  // The cursor is the last row seen, as "<date>_<id>". Date alone is not
+  // enough: a burst of photos shares one second, and paging on it would skip
+  // whichever of them fell past the page boundary.
+  const cursor = /^(\d+)_([0-9a-f]{32})$/.exec(c.req.query('after') ?? '');
 
-  // COALESCE so items missing EXIF dates still page deterministically.
+  // COALESCE so items missing EXIF dates still sort and page deterministically.
+  const TS = 'COALESCE(m.taken_at, m.uploaded_at)';
+  const dir = desc ? 'DESC' : 'ASC';
   const sql = `
-    SELECT ${ITEM_COLS} FROM media m
-    ${before ? 'WHERE COALESCE(m.taken_at, m.uploaded_at) < ?2' : ''}
-    ORDER BY COALESCE(m.taken_at, m.uploaded_at) DESC, m.id
+    SELECT ${ITEM_COLS}, ${TS} AS ts FROM media m
+    ${cursor ? `WHERE (${TS}, m.id) ${desc ? '<' : '>'} (?2, ?3)` : ''}
+    ORDER BY ${TS} ${dir}, m.id ${dir}
     LIMIT ?1
   `;
-  const stmt = before
-    ? c.env.DB.prepare(sql).bind(limit, before)
+  const stmt = cursor
+    ? c.env.DB.prepare(sql).bind(limit, Number(cursor[1]), cursor[2])
     : c.env.DB.prepare(sql).bind(limit);
 
   const { results } = await stmt.all();
@@ -83,7 +90,7 @@ tagReads.get('/timeline', async (c) => {
   const last = results.at(-1) as any;
   return c.json({
     items,
-    next: results.length === limit ? (last?.taken_at ?? null) : null,
+    next: results.length === limit ? `${last.ts}_${last.id}` : null,
     total: items.length,
   });
 });

@@ -42,8 +42,30 @@ const b64urlToBytes = (s: string): Uint8Array => {
   return Uint8Array.from(bin, (c) => c.charCodeAt(0));
 };
 
+export interface AccessClaims {
+  aud?: string | string[]; exp?: number; iss?: string;
+  email?: string; sub?: string; common_name?: string;
+}
+
 /** Returns the verified subject, or null if the assertion is absent or invalid. */
 export async function verifyAccessJwt(req: Request, env: Env): Promise<string | null> {
+  const claims = await verifiedClaims(req, env);
+  return claims ? claims.email ?? claims.sub ?? 'owner' : null;
+}
+
+/**
+ * The email of the person signed in through Access, or null. Service tokens,
+ * which is how the processing service gets past Access, are issued a valid JWT too, but one
+ * with no email and a common_name instead. This is what tells someone at a
+ * browser apart from a script holding credentials.
+ */
+export async function accessUserEmail(req: Request, env: Env): Promise<string | null> {
+  const claims = await verifiedClaims(req, env);
+  if (!claims || claims.common_name) return null;
+  return typeof claims.email === 'string' && claims.email ? claims.email : null;
+}
+
+export async function verifiedClaims(req: Request, env: Env): Promise<AccessClaims | null> {
   const team = env.ACCESS_TEAM?.trim();
   const aud = env.ACCESS_AUD?.trim();
   if (!team || !aud) return null;               // Access not configured yet
@@ -57,7 +79,7 @@ export async function verifyAccessJwt(req: Request, env: Env): Promise<string | 
   const [rawHeader, rawPayload, rawSig] = parts;
 
   let header: { kid?: string; alg?: string };
-  let payload: { aud?: string | string[]; exp?: number; iss?: string; email?: string; sub?: string };
+  let payload: AccessClaims;
   try {
     header = JSON.parse(new TextDecoder().decode(b64urlToBytes(rawHeader)));
     payload = JSON.parse(new TextDecoder().decode(b64urlToBytes(rawPayload)));
@@ -88,7 +110,7 @@ export async function verifyAccessJwt(req: Request, env: Env): Promise<string | 
   const auds = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
   if (!auds.includes(aud)) return null;
 
-  return payload.email ?? payload.sub ?? 'owner';
+  return payload;
 }
 
 /** Resolves who is asking. Share-link handling arrives in Phase 5. */

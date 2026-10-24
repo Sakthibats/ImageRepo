@@ -2,11 +2,21 @@
   "name": "imagerepo",
   "private": true,
   "version": "0.1.0",
-  "workspaces": ["packages/*"],
-  "engines": { "node": ">=20" },
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "ingest": "npm run -w @imagerepo/ingest start --",
+    "test": "npm run -s -w @imagerepo/worker typecheck && npm run -s -w @imagerepo/web typecheck && npm run -s -w @imagerepo/worker test && npm run -s test:python",
+    "test:python": "cd Preprocessing && .venv/bin/pytest -q",
     "worker:dev": "npm run -w @imagerepo/worker dev",
-    "worker:deploy": "npm run -w @imagerepo/worker deploy"
+    "worker:deploy": "npm run -w @imagerepo/worker deploy",
+    "deploy": "tsx scripts/deploy.mts",
+    "migrate:local": "tsx scripts/deploy.mts --local"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15"
   }
 }

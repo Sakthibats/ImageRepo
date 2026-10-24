@@ -1,5 +1,5 @@
 import { r2Key } from '@imagerepo/shared';
-import type { AlbumManifest, ManifestItem, OwnerManifestItem } from '@imagerepo/shared';
+import type { AlbumManifest, FolderSummary, ManifestItem, OwnerManifestItem } from '@imagerepo/shared';
 import { albumMedia, listAlbums } from './db.js';
 
 /**
@@ -35,6 +35,7 @@ function toGuestItem(row: any): ManifestItem {
   if (row.thumbhash) item.th = row.thumbhash;
   if (row.duration_ms) item.d = row.duration_ms;
   if (row.caption) item.c = row.caption;
+  if (row.folder_id) item.f = row.folder_id;
   return item;
 }
 
@@ -44,6 +45,46 @@ function toOwnerItem(row: any): OwnerManifestItem {
   if (row.lon != null) item.lon = row.lon;
   if (row.place) item.place = row.place;
   return item;
+}
+
+export interface FolderRow { id: string; title: string; cover_id: string | null }
+export interface MemberRow { id: string; kind: string; taken_at: number | null; folder_id: string | null }
+
+/**
+ * Folder summaries for an album, most recent first, counting only `items`
+ * (oldest first, as albums are baked). A guest's list is built from what
+ * that guest can see, so a pinned cover outside it falls back to the earliest
+ * photo they can see rather than pointing at something they cannot load.
+ */
+export function summariseFolders(folders: FolderRow[], items: MemberRow[]): FolderSummary[] {
+  const visible = new Set(items.map((i) => i.id));
+  const members = new Map<string, MemberRow[]>();
+  for (const it of items) {
+    if (!it.folder_id) continue;
+    const list = members.get(it.folder_id) ?? [];
+    list.push(it);
+    members.set(it.folder_id, list);
+  }
+
+  const out = folders.map((f): FolderSummary => {
+    const own = members.get(f.id) ?? [];
+    // A pinned cover may be any photo in the album, not only this folder's.
+    const pinned = f.cover_id && visible.has(f.cover_id) ? f.cover_id : null;
+    // Prefer a photo, as album covers do: a video poster is a frame grab.
+    const earliest = (own.find((m) => m.kind === 'photo') ?? own[0])?.id ?? null;
+    const newest = own.reduce((n, m) => Math.max(n, m.taken_at ?? 0), 0);
+    return {
+      id: f.id, title: f.title, n: own.length,
+      cover: pinned ?? earliest, ...(pinned ? { coverPinned: true } : {}),
+      newest: newest || null,
+    };
+  });
+
+  // An empty folder is usually one just made to be filled, so it leads.
+  return out.sort((a, b) =>
+    Number(a.n > 0) - Number(b.n > 0) ||
+    (b.newest ?? 0) - (a.newest ?? 0) ||
+    a.title.localeCompare(b.title));
 }
 
 /** Short random version token; changing it busts every cached copy at once. */
@@ -56,16 +97,20 @@ export async function bakeAlbum(
   bucket: R2Bucket,
   albumId: string,
 ): Promise<{ ver: string; count: number }> {
-  const album = await db.prepare(`SELECT id, title FROM albums WHERE id = ?1`)
-    .bind(albumId).first<{ id: string; title: string }>();
+  const album = await db.prepare(`SELECT id, title, manifest_ver FROM albums WHERE id = ?1`)
+    .bind(albumId).first<{ id: string; title: string; manifest_ver: string | null }>();
   if (!album) throw new Error(`no such album: ${albumId}`);
 
   const { results } = await albumMedia(db, albumId);
+  const { results: folderRows } = await db.prepare(
+    `SELECT id, title, cover_id FROM folders WHERE album_id = ?1`
+  ).bind(albumId).all<FolderRow>();
   const ver = newVersion();
 
-  const write = async (audience: Audience, items: ManifestItem[]) => {
+  const write = async (audience: Audience, items: ManifestItem[], folders?: FolderSummary[]) => {
     const body: AlbumManifest = {
       album: album.id, title: album.title, ver, count: items.length, items,
+      ...(folders ? { folders } : {}),
     };
     await bucket.put(manifestKey(albumId, audience, ver), JSON.stringify(body), {
       httpMetadata: {
@@ -76,7 +121,10 @@ export async function bakeAlbum(
     });
   };
 
-  await write('owner', (results as any[]).map(toOwnerItem));
+  // Guests are served a manifest built per share link (guest.ts), which
+  // carries only the folders that link includes; this baked one has none.
+  await write('owner', (results as any[]).map(toOwnerItem),
+    summariseFolders(folderRows, results as unknown as MemberRow[]));
   await write('guest', (results as any[]).map(toGuestItem));
 
   // Give a new album a cover so the album list is not a wall of blank tiles.
@@ -92,7 +140,56 @@ export async function bakeAlbum(
   await db.prepare(`UPDATE albums SET manifest_ver = ?1, updated_at = ?2 WHERE id = ?3`)
     .bind(ver, Math.floor(Date.now() / 1000), albumId).run();
 
+  // The previous version stays: a page that read the index just before this
+  // bake is about to ask for it.
+  await pruneManifests(bucket, albumId, [ver, album.manifest_ver]);
+
   return { ver, count: results.length };
+}
+
+/**
+ * Deletes an album's manifests other than the versions in `keep`. Without
+ * this every edit leaves another copy behind for good, and owner copies carry
+ * location.
+ */
+export async function pruneManifests(
+  bucket: R2Bucket, albumId: string, keep: (string | null)[] = [],
+): Promise<number> {
+  const prefix = `man/album/${albumId}.`;
+  const doomed: string[] = [];
+  await eachKey(bucket, prefix, (key) => {
+    // "<audience>.<ver>.json", or "<ver>.json" from before the audience split.
+    const parts = key.slice(prefix.length).split('.');
+    if (!keep.includes(parts[parts.length - 2])) doomed.push(key);
+  });
+  await deleteKeys(bucket, doomed);
+  return doomed.length;
+}
+
+/** Deletes the manifests of albums that no longer exist. */
+export async function sweepManifests(bucket: R2Bucket, liveAlbumIds: string[]): Promise<number> {
+  const live = new Set(liveAlbumIds);
+  const doomed: string[] = [];
+  // Album ids are slugs, which never contain a dot.
+  await eachKey(bucket, 'man/album/', (key) => {
+    if (!live.has(key.slice('man/album/'.length).split('.')[0])) doomed.push(key);
+  });
+  await deleteKeys(bucket, doomed);
+  return doomed.length;
+}
+
+async function eachKey(bucket: R2Bucket, prefix: string, fn: (key: string) => void) {
+  let cursor: string | undefined;
+  do {
+    const page = await bucket.list({ prefix, cursor, limit: 1000 });
+    for (const o of page.objects) fn(o.key);
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+}
+
+/** R2 deletes at most 1000 keys per call. */
+export async function deleteKeys(bucket: R2Bucket, keys: string[]) {
+  for (let i = 0; i < keys.length; i += 1000) await bucket.delete(keys.slice(i, i + 1000));
 }
 
 /**

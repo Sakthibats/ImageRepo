@@ -14,6 +14,9 @@ preview_urls = false
 binding = "DB"
 database_name = "imagerepo"
 database_id = "1db2d100-8323-4347-a801-6d7096adc7bb"
+# `wrangler d1 migrations apply` (run by `npm run deploy`) records each file it
+# applies in the d1_migrations table, so only new ones run.
+migrations_dir = "../../migrations"
 
 [[r2_buckets]]
 binding = "BUCKET"
@@ -26,9 +29,20 @@ ACCESS_TEAM = "late-dew-7d1b"
 # The Access application audience (AUD) tag, from the app's settings page.
 ACCESS_AUD = "8522b25f12118db302869ff8bc23a8acbaa29b384c5cdd7fde09ffbf7f49ab53"
 
+# Browser uploads go straight to R2 through presigned URLs (src/s3.ts), which
+# need R2's S3 API: the account id here, and an R2 API token's key pair as
+# secrets. Until both are set, uploads answer 503.
+R2_ACCOUNT_ID = "7285e6ee853898a8530a2d5887941352"
+R2_BUCKET_NAME = "imagerepo"
+# Client ID of the processing service's Access service token. Requests with
+# that token are held to the few routes the service needs (src/auth.ts).
+PREPROCESS_CLIENT_ID = "f8a11cca1d8a58058eb47501f1243d1f.access"
+
 # Secrets (never in this file):
 #   npx wrangler secret put ADMIN_TOKEN
 #   npx wrangler secret put SHARE_HMAC_KEY
+#   npx wrangler secret put R2_ACCESS_KEY_ID
+#   npx wrangler secret put R2_SECRET_ACCESS_KEY
 
 # The SPA is served by this same Worker, not a separate Pages project, so that
 # Cloudflare Access's CF_Authorization cookie covers both the app and the API.

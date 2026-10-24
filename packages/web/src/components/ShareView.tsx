@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { OwnerManifestItem } from '@imagerepo/shared';
 import { openShareSession, guestAssetUrl, type GuestAlbum, type GuestItem } from '../share.ts';
 import { PhotoGrid } from './PhotoGrid.tsx';
 import { Lightbox } from './Lightbox.tsx';
+import { FolderStrip, itemsIn, type FolderView } from './FolderStrip.tsx';
+import { loadSort, saveSort, type SortOrder } from '../tags.ts';
 
 /** The whole guest experience. No login, no album switching, no admin. */
 export function ShareView({ token }: { token: string }) {
@@ -12,6 +14,17 @@ export function ShareView({ token }: { token: string }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
   const [lightbox, setLightbox] = useState<number | null>(null);
+  const [view, setView] = useState<FolderView>('all');
+  const [sort, setSort] = useState<SortOrder>(loadSort);
+
+  // The server sends items oldest first: "All photos" is every folder the
+  // link shares, combined by date. Newest first is its mirror.
+  const shown = useMemo(() => {
+    if (!album) return [];
+    const list = itemsIn(album.items, view);
+    return sort === 'desc' ? [...list].reverse() : list;
+  }, [album, view, sort]);
+  const byId = useMemo(() => new Map((album?.items ?? []).map((i) => [i.id, i])), [album]);
 
   const attempt = async (code?: string) => {
     setBusy(true);
@@ -66,19 +79,44 @@ export function ShareView({ token }: { token: string }) {
 
   const urlFor = (item: any, variant: string) =>
     guestAssetUrl(token, item as GuestItem, variant);
+  // Covers are ids; a guest can only load an item it holds a tag for.
+  const coverUrl = (id: string) => {
+    const item = byId.get(id);
+    return item ? guestAssetUrl(token, item, '320') : null;
+  };
+  const firstPhoto = album.items.find((i) => i.k === 'photo') ?? album.items[0];
 
   return (
     <main>
       <header className="head">
         <h1>{album.title}</h1>
         <span className="muted">{album.count} items</span>
+        {album.items.length > 1 && (
+          <div className="push">
+            <button className="btn small sort" title="Change the order photos are shown in"
+                    onClick={() => {
+                      const next: SortOrder = sort === 'asc' ? 'desc' : 'asc';
+                      setSort(next); saveSort(next); setLightbox(null); window.scrollTo(0, 0);
+                    }}>
+              <span aria-hidden="true">{sort === 'asc' ? '↑' : '↓'}</span>
+              {sort === 'asc' ? 'Oldest first' : 'Newest first'}
+            </button>
+          </div>
+        )}
       </header>
 
-      <PhotoGrid items={album.items} onOpen={setLightbox} urlFor={urlFor} />
+      <FolderStrip
+        folders={album.folders ?? []} total={album.items.length}
+        loose={album.items.filter((i) => !i.f).length}
+        view={view} onView={(v) => { setView(v); setLightbox(null); }}
+        coverUrl={coverUrl} allCover={firstPhoto?.id ?? null}
+      />
+
+      <PhotoGrid items={shown} onOpen={setLightbox} urlFor={urlFor} />
 
       {lightbox !== null && (
         <Lightbox
-          items={album.items as unknown as OwnerManifestItem[]}
+          items={shown as unknown as OwnerManifestItem[]}
           index={lightbox}
           onClose={() => setLightbox(null)}
           onIndex={setLightbox}

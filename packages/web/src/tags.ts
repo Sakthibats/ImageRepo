@@ -15,8 +15,8 @@ export const tagsApi = {
   list: () => get<{ tags: Tag[] }>('/a/tags'),
   map: (album?: string) => get<{ map: Record<string, string[]> }>(
     album ? `/a/tags/map?album=${encodeURIComponent(album)}` : '/a/tags/map'),
-  timeline: (before?: number, limit = 400) => get<TimelinePage>(
-    `/a/tags/timeline?limit=${limit}${before ? `&before=${before}` : ''}`),
+  timeline: (order: SortOrder, after?: string, limit = 400) => get<TimelinePage>(
+    `/a/tags/timeline?limit=${limit}&order=${order}${after ? `&after=${after}` : ''}`),
   search: (tagIds: string[], mode: 'all' | 'any') => get<{ items: Item[] }>(
     `/a/tags/search?tags=${tagIds.map(encodeURIComponent).join(',')}&mode=${mode}`),
 
@@ -30,7 +30,18 @@ export interface Item {
   id: string; k: 'photo' | 'video'; w: number; h: number;
   t?: number; th?: string; d?: number; c?: string;
 }
-export interface TimelinePage { items: Item[]; next: number | null; total: number }
+export interface TimelinePage { items: Item[]; next: string | null; total: number }
+
+/** 'asc' = oldest first, the default: an album reads like the day it records. */
+export type SortOrder = 'asc' | 'desc';
+
+const SORT_KEY = 'imagerepo.sort';
+export const loadSort = (): SortOrder => {
+  try { return localStorage.getItem(SORT_KEY) === 'desc' ? 'desc' : 'asc'; } catch { return 'asc'; }
+};
+export const saveSort = (order: SortOrder) => {
+  try { localStorage.setItem(SORT_KEY, order); } catch { /* private mode: just don't remember */ }
+};
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(path, { credentials: 'same-origin' });
