@@ -371,7 +371,7 @@ async function deleteMediaRows(env: Env, ids: string[]): Promise<number> {
   }
   await deleteKeys(env.BUCKET, keys);
 
-  // Tags, stages, album memberships and the ingest log cascade from media.
+  // Tags, stages and album memberships cascade from media.
   await env.DB.batch(chunks(ids).map((part) =>
     env.DB.prepare(`DELETE FROM media WHERE id IN (${marks(part.length)})`).bind(...part)));
   return found;

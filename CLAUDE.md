@@ -79,7 +79,8 @@ npm run deploy                   # migrations, web build, Worker deploy, smoke t
 
 - TypeScript in packages/, Python 3.12 in Preprocessing/. Comments say why.
 - Worker tests are `tsx` scripts with `check()`; Python uses pytest.
-- Migrations: new numbered file, additive; `schema.sql` is not updated.
+- Migrations: new numbered file; `schema.sql` is not updated. Additive, except
+  dropping a table once no deployed code uses it (009 did this).
 - Stage names and versions are shared by the service and D1's `media_stages`.
   Bumping a version means "redo this".
 - `.env*` files are secrets and blocked from reading and writing; templates

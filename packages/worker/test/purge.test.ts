@@ -56,7 +56,7 @@ console.log('\npurge everything\n');
   check('the count of deleted objects adds up', deleted >= 1230 * 4, String(deleted));
 
   const tables = (w.sqlite.prepare(
-    `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('settings', 'sqlite_sequence')`
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name != 'sqlite_sequence'`
   ).all() as { name: string }[]).map((t) => t.name);
   const left = tables.filter((t) => (w.sqlite.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as any).n > 0);
   check('every table is empty', left.length === 0, left.join(', '));
