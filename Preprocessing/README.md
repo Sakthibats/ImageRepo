@@ -43,8 +43,7 @@ Or in Docker: `docker compose up --build -d`, and `docker compose logs -f`.
 ```
 
 The strippers and the ThumbHash encoder are ports from TypeScript; the tests
-run the originals (through the repo's `node_modules`) and require identical
-output.
+compare them byte-for-byte with outputs recorded from the originals.
 
 ## Adding a stage
 

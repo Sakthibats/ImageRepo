@@ -9,8 +9,8 @@ Photos and videos are added in the browser (a file picker, same on phone and
 laptop). The browser sends files as picked straight to R2; a Python service
 (`Preprocessing/`) strips, resizes and records them.
 
-Folder-specific notes load when you work there: `Preprocessing/CLAUDE.md`,
-`packages/ingest/CLAUDE.md`. The README is for people setting it up.
+`Preprocessing/CLAUDE.md` loads when you work there. The README is for people
+setting it up.
 
 ## How an upload flows
 
@@ -18,6 +18,7 @@ Folder-specific notes load when you work there: `Preprocessing/CLAUDE.md`,
 browser  hash → POST /admin/inbox/start → PUT inbox/{id}.{ext} (presigned, parts >64MB) → /finish
 service  /admin/inbox/claim → download, re-hash → stages → R2 orig/ drv/ post/ prev/
          → /admin/inbox/complete (Worker writes D1, bakes album, deletes inbox copy)
+         /admin/inbox/heartbeat every 20s → `runners`; the uploader shows online/offline
 ```
 
 `uploads` (migration 007) holds files until processed; nothing reaches `media`
@@ -34,7 +35,6 @@ packages/worker/   Hono Worker: /admin (owner + service), /a (owner reads), /s (
   test/            Node: Hono app, D1 as SQLite, R2 as a Map, a fake S3 endpoint
 packages/web/      React + Vite, built to dist/, served by the Worker
 Preprocessing/     Python service: claims uploads, runs the stages (photo, video)
-packages/ingest/   the older `imagerepo` CLI, which processes on the laptop (see its CLAUDE.md)
 migrations/        every D1 change since schema.sql, numbered, additive
 scripts/deploy.mts `npm run deploy`: checks, migrations, build, deploy, smoke test
 ```
@@ -62,8 +62,8 @@ npm run deploy                   # migrations, web build, Worker deploy, smoke t
   the one definition; manifest and asset requests both use it.
 - **Ids are content hashes** (first 32 hex of SHA-256). Keys are immutable and
   cached forever. The service re-hashes every upload; a mismatch is refused.
-- **The Worker is the only writer to D1.** The service and CLI write bytes to R2
-  and send records to the Worker.
+- **The Worker is the only writer to D1.** The service writes bytes to R2 and
+  sends records to the Worker.
 - **The web app reads baked JSON**, not D1. Any write that changes an album must
   `bakeAlbum` it.
 - **Auth.** `/admin` takes a verified Access JWT or the `ADMIN_TOKEN` bearer;
@@ -78,10 +78,10 @@ npm run deploy                   # migrations, web build, Worker deploy, smoke t
 ## Conventions
 
 - TypeScript in packages/, Python 3.12 in Preprocessing/. Comments say why.
-- Worker and CLI tests are `tsx` scripts with `check()`; Python uses pytest.
+- Worker tests are `tsx` scripts with `check()`; Python uses pytest.
 - Migrations: new numbered file, additive; `schema.sql` is not updated.
-- Stage names and versions are shared by the service, the CLI and D1's
-  `media_stages`. Bumping a version means "redo this".
+- Stage names and versions are shared by the service and D1's `media_stages`.
+  Bumping a version means "redo this".
 - `.env*` files are secrets and blocked from reading and writing; templates
   are named `env.example`. Use `doctor` commands to check configuration.
 - Commit in steps; never push or deploy unless asked.
@@ -94,28 +94,30 @@ npm run deploy                   # migrations, web build, Worker deploy, smoke t
   Inbox calls are capped (25 files, 20 records) to stay inside Worker limits.
 - R2 CORS (`packages/worker/r2-cors.json`) allows PUT from the app's origin
   only; a new hostname needs adding there and re-applying.
-- `sharp().metadata()` / vips headers report stored dimensions; EXIF
-  orientations 5–8 mean displayed width and height are swapped.
+- vips headers report stored dimensions; EXIF orientations 5–8 mean displayed
+  width and height are swapped.
+- The laptop CLI (`packages/ingest`) was removed on 25 Oct 2026; git history has
+  it. Its outputs are the reference for the service's parity tests.
 
 ## Current state (25 October 2026)
 
-- Branch `cli-stages`, 4 commits ahead of `origin/cli-stages`, not merged to
-  `main`. Production runs `1296690` (Worker + web, deployed 25 Oct);
-  migrations 001–007 are applied and recorded. R2 CORS and the `inbox/`
-  lifecycle rule are set.
+- Branch `cli-stages`, ahead of `origin/cli-stages`, not merged to `main`.
+  Production runs `1296690`; the CLI removal and service status (migration
+  008) are committed but not deployed. R2 CORS and the `inbox/` lifecycle
+  rule are set.
 - The library was purged and is being re-added through the browser. The
   service runs on the laptop (`python -m preprocessing run`); not hosted yet.
 - Verified end to end: photos from laptop and iPhone. Not yet: real iPhone
   video (HEVC/HDR, whether the picker converts it), the Docker image (never
   built), hosting.
-- Open decision: what to do with the CLI (keep, upload-only, or remove).
+- `.env.ingest.example` has uncommitted local edits by the owner; it belonged
+  to the CLI. Ask before touching it.
 
 ## Planned next
 
-1. Decide the CLI's future; then README to match the browser flow.
-2. A backlog mode in the service: claim `/admin/stages/claim` work so a stage
+1. A backlog mode in the service: claim `/admin/stages/claim` work so a stage
    version bump or a new stage re-processes existing media from `orig/`.
    Stripped JPEGs in `orig/` have lost their EXIF orientation: take it from
    `raw_meta.Orientation`, or rotated photos come out sideways.
-3. Host the service (Docker image exists; any always-on box or Cloudflare Containers).
-4. Faces (detect + embed from the 1024px copy, local model, owner-only), then objects.
+2. Host the service (Docker image exists; any always-on box or Cloudflare Containers).
+3. Faces (detect + embed from the 1024px copy, local model, owner-only), then objects.

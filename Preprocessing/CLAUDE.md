@@ -6,7 +6,7 @@ reports records. Entry: `python -m preprocessing [run|once|doctor]`.
 ```
 runner.py        claim loop, thread pool, batching of /complete (≤20, ≤5s) and /fail
 stages/          registry (__init__.py) + photo.py, video.py; a stage = name, version, run(job, data)
-strip/           lossless metadata removal: jpeg, png, heic (ports of packages/ingest/src)
+strip/           lossless metadata removal: jpeg, png, heic (ported from the removed CLI)
 exif.py          photo metadata via Pillow; video.py: ffprobe/ffmpeg
 images.py        upright sRGB base ≤2048 wide → 320/1024/2048 AVIF + thumbhash
 record.py        MediaRecord for the Worker, from stage outputs
@@ -17,7 +17,7 @@ api.py / r2.py   Worker client (Access service token) / boto3 against R2
 
 ```bash
 python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest -q          # parity tests run the TS originals via ../node_modules/.bin/tsx
+.venv/bin/pytest -q          # ~15s; needs ffmpeg for the video tests
 .venv/bin/python -m preprocessing doctor
 docker compose up --build -d # never built yet
 ```
@@ -36,5 +36,8 @@ docker compose up --build -d # never built yet
   H.264 preview (VideoToolbox on a Mac, else libx264). No HDR tone-mapping.
 - Errors: `PermanentError` → failed at once (hash mismatch, unreadable, no
   stripper); anything else is retried by the Worker up to 5 times.
-- Strippers and thumbhash must stay byte-identical to the TS versions while
-  the CLI exists; `test_strip.py`/`test_thumbhash.py` enforce it.
+- Strippers and thumbhash are checked byte-for-byte against outputs recorded
+  from the TS originals (`tests/fixtures/expected.json`). A deliberate change
+  to their output means a new stage version, not a new fixture.
+- `runner.py` checks in every 20s (`heartbeat`) and checks out on exit; the
+  uploader shows the service offline a minute after the last check-in.
