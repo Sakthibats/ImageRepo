@@ -19,13 +19,16 @@ browser  hash → POST /admin/inbox/start → PUT inbox/{id}.{ext} (presigned, p
 service  /admin/inbox/claim → download, re-hash → stages → R2 orig/ drv/ post/ prev/
          → /admin/inbox/complete (Worker writes D1, deletes inbox copy)
          /admin/inbox/heartbeat every 20s → `runners`
+         no uploads waiting: /admin/stages/claim → orig/ from R2 → the stage → R2
+         → /admin/stages/report (fields; media.rev if it rewrote served files)
 web      /admin/inbox/summary → album backlog line (service online/offline, waiting,
          processing, failed) and per-album counts; /admin/inbox/retry requeues failed
          uploads still in inbox/ (owner only)
 ```
 
 `uploads` (migration 007) holds files until processed; nothing reaches `media`
-or a manifest before then. Routes: `packages/worker/src/inbox.ts`.
+or a listing before then. Routes: `packages/worker/src/inbox.ts`; re-runs:
+`packages/worker/src/stages.ts`.
 Browser side: `packages/web/src/upload.ts` (sending only) and
 `components/Backlog.tsx` (one poller for the album view and album list).
 
@@ -36,6 +39,7 @@ packages/shared/   MediaRecord, r2Key, MEDIA_EXT: the contract every part uses
 packages/worker/   Hono Worker: /admin (owner + service), /a (owner reads), /s (guests)
   src/listing.ts   listMedia(scope, shape): every way of browsing, a page at a time
   src/inbox.ts     browser uploads and the service's queue
+  src/stages.ts    re-running stages over the library, one pass per version
   src/s3.ts        presigned URLs and multipart, via R2's S3 API (aws4fetch)
   test/            Node: Hono app, D1 as SQLite, R2 as a Map, a fake S3 endpoint
 packages/web/      React + Vite, built to dist/, served by the Worker
@@ -67,6 +71,8 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
   the one definition; manifest and asset requests both use it.
 - **Ids are content hashes** (first 32 hex of SHA-256). Keys are immutable and
   cached forever. The service re-hashes every upload; a mismatch is refused.
+  A re-run that rewrites a served file bumps `media.rev`, which goes in its
+  URLs (`?r=`): an item's `r`, a cover's `coverRev`, `assetUrl(item, …)`.
 - **The Worker is the only writer to D1.** The service writes bytes to R2 and
   sends records to the Worker.
 - **Every read is a page.** All listings (library, album, folder, share link,
@@ -95,7 +101,12 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 - Migrations: new numbered file; `schema.sql` is not updated. Additive, except
   dropping a table or column once no deployed code uses it (009, 012).
 - Stage names and versions are shared by the service and D1's `media_stages`.
-  Bumping a version means "redo this".
+  Bumping a version means "redo this": for a stage whose `source` is `orig`
+  (derivatives, poster, preview, later faces), the service re-runs it over
+  the library when no uploads wait, one pass per version kept in
+  `stage_sweeps`, at most 5,000 a day. An `upload` stage (exif, original,
+  probe) read what only the deleted upload had: its new version applies to
+  new uploads only.
 - `.env*` files are secrets and blocked from reading and writing; templates
   are named `env.example`. Use `doctor` commands to check configuration.
 - Commit in steps; never push or deploy unless asked.
@@ -113,7 +124,8 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 - R2 CORS (`packages/worker/r2-cors.json`) allows PUT from the app's origin
   only; a new hostname needs adding there and re-applying.
 - vips headers report stored dimensions; EXIF orientations 5–8 mean displayed
-  width and height are swapped.
+  width and height are swapped. Stripped JPEG and PNG originals have no
+  orientation at all: a re-run's claim carries it from `raw_meta`.
 - The laptop CLI (`packages/ingest`) was removed on 25 Oct 2026; git history has
   it. Its outputs are the reference for the service's parity tests.
 
@@ -130,6 +142,10 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
   rule are set.
 - Baking is fully gone: `man/` is deleted from R2 and `PREFIXES`, and 012
   dropped `albums.manifest_ver` and `album_media.position`.
+- Built, not yet pushed or deployed: re-running stages (migration 013:
+  `stage_sweeps`, `media.rev`; `/admin/stages/claim|report|sweeps`; the
+  service's re-run loop; `?r=` in asset URLs). Deploy the Worker before
+  starting the new service: the old Worker's claim route has another shape.
 - The library holds 10 items (9 photos, 1 video) in one album. D1 use is small:
   about 40k rows read and 1.5k written a day, mostly the service polling.
 - The service runs on the laptop (`python -m preprocessing run`); not hosted.
@@ -149,13 +165,9 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
    decide R2 storage: 10 GB is free, 100k photos is roughly 300–500 GB
    (about $5–7 a month). Only if the numbers say so: album pages on scroll
    (web only, same API), version-keyed browser caching, exact upload counts.
-2. A backlog mode in the service: claim `/admin/stages/claim` work so a stage
-   version bump or a new stage re-processes existing media from `orig/`.
-   Stripped JPEGs in `orig/` have lost their EXIF orientation: take it from
-   `raw_meta.Orientation`, or rotated photos come out sideways.
-3. Host the service for a weeks-long upload: an always-on box from the Docker
+2. Host the service for a weeks-long upload: an always-on box from the Docker
    image. Cloudflare Containers needs the paid Workers plan.
-4. Faces (detect + embed from the 1024px copy, local model, owner-only), then
+3. Faces (detect + embed from the 1024px copy, local model, owner-only), then
    objects. Agreed shape, not built: everything is a tag. `tags.kind` (yours,
    person, object), `media_tags.source` (owner or model@version) and `score`;
    a `faces` table holds boxes linked to a person tag; embeddings go to R2

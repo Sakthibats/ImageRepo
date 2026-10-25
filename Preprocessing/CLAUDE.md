@@ -1,11 +1,14 @@
 # Preprocessing (Python service)
 
 Claims browser uploads from the Worker, runs the stages, writes outputs to R2,
-reports records. Entry: `python -m preprocessing [run|once|doctor]`.
+reports records. With no uploads waiting, re-runs stages the library is
+behind on. Entry: `python -m preprocessing [run|once|doctor]`.
 
 ```
-runner.py        claim loop, thread pool, batching of /complete (≤20, ≤5s) and /fail
-stages/          registry (__init__.py) + photo.py, video.py; a stage = name, version, run(job, data)
+runner.py        claim loop, thread pool, batching of /complete (≤20, ≤5s) and /fail;
+                 re-runs (/admin/stages/claim, /report) when the inbox is empty
+stages/          registry (__init__.py) + photo.py, video.py; a stage = name, version,
+                 source ('upload' | 'orig'), run(job, data)
 strip/           lossless metadata removal: jpeg, png, heic (ported from the removed CLI)
 exif.py          photo metadata via Pillow; video.py: ffprobe/ffmpeg
 images.py        upright sRGB base ≤2048 wide → 320/1024/2048 AVIF + thumbhash
@@ -42,3 +45,10 @@ docker compose up --build -d # never built yet
   to their output means a new stage version, not a new fixture.
 - `runner.py` checks in every 20s (`heartbeat`) and checks out on exit; the
   uploader shows the service offline a minute after the last check-in.
+- Re-runs: only `source = 'orig'` stages, from `orig/` in R2. A stripped JPEG
+  or PNG has lost its EXIF orientation; the claim carries it (`Job.orientation`)
+  and `upright_base` turns the photo itself, sized as an upload would be.
+  Videos are probed again from their MP4 (streams and rotation survive the
+  remux). A write under `keys.SERVED` reports `rewrote`, which bumps
+  `media.rev`. A stage with nothing behind is asked about every 10 minutes
+  (`RERUN_IDLE`); the Worker caps re-runs at 5,000 a day.
