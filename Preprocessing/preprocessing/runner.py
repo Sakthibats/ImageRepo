@@ -64,7 +64,11 @@ class Runner:
         try:
             path = tmp / f'upload.{item["ext"]}'
             (tmp / 'work').mkdir()
-            self.r2.download(item['key'], path)
+            try:
+                self.r2.download(item['key'], path)
+            except FileNotFoundError:
+                # R2 expires inbox/ after 7 days, whatever the queue says.
+                raise PermanentError('no longer in storage: uploads are kept for 7 days') from None
             # The id came from the browser. Bytes that do not match it must
             # never be written under it: R2 keys are immutable.
             actual = content_id(path)

@@ -33,7 +33,13 @@ class R2:
         )
 
     def download(self, key: str, path: Path) -> None:
-        self.s3.download_file(self.bucket, key, str(path), Config=TRANSFER)
+        """FileNotFoundError when the key is not there."""
+        try:
+            self.s3.download_file(self.bucket, key, str(path), Config=TRANSFER)
+        except ClientError as e:
+            if e.response.get('Error', {}).get('Code') in ('404', 'NoSuchKey'):
+                raise FileNotFoundError(key) from e
+            raise
 
     def put(self, key: str, body: bytes, content_type: str) -> None:
         # Content-addressed keys never change, so everything is cached forever.

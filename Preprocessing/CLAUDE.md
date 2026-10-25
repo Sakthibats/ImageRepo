@@ -35,7 +35,8 @@ docker compose up --build -d # never built yet
   Original always remuxed (`-c copy`, `-map_metadata -1`); HEVC gets a 720p
   H.264 preview (VideoToolbox on a Mac, else libx264). No HDR tone-mapping.
 - Errors: `PermanentError` → failed at once (hash mismatch, unreadable, no
-  stripper); anything else is retried by the Worker up to 5 times.
+  stripper, gone from `inbox/`); anything else is retried by the Worker up to
+  5 times, waiting longer before each.
 - Strippers and thumbhash are checked byte-for-byte against outputs recorded
   from the TS originals (`tests/fixtures/expected.json`). A deliberate change
   to their output means a new stage version, not a new fixture.

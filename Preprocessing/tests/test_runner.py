@@ -37,6 +37,15 @@ def test_bytes_that_do_not_match_their_id_are_given_up_on(tmp_path):
     assert not any(k.startswith(('orig/', 'drv/')) for k in r2.objects), 'nothing written under a wrong id'
 
 
+def test_an_upload_expired_from_the_inbox_is_given_up_on(tmp_path):
+    r2 = FakeR2()
+    item = upload(r2, write_photo(tmp_path / 'a.jpg'))
+    del r2.objects[item['key']]
+    api = FakeApi([item])
+    run(api, r2)
+    assert api.failed[0]['permanent'] and '7 days' in api.failed[0]['error']
+
+
 def test_a_crash_in_a_stage_is_retried_not_given_up_on(tmp_path, monkeypatch):
     def boom(self, job, data):
         raise MemoryError('out of memory')

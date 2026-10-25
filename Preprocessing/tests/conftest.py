@@ -88,6 +88,8 @@ class FakeR2:
         self.objects: dict[str, bytes] = {}
 
     def download(self, key, path):
+        if key not in self.objects:
+            raise FileNotFoundError(key)
         path.write_bytes(self.objects[key])
 
     def put(self, key, body, content_type):
