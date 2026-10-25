@@ -1,4 +1,3 @@
-import type { AlbumSummary } from './api.ts';
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { credentials: 'same-origin', ...init });
@@ -16,7 +15,6 @@ const json = (method: string, body?: unknown): RequestInit => ({
 });
 
 export const adminApi = {
-  albums: () => req<{ albums: (AlbumSummary & { seeded_from?: string })[] }>('/admin/albums'),
 
   createAlbum: (title: string) => req<{ id: string }>('/admin/albums', json('POST', { title })),
 
@@ -76,9 +74,6 @@ export const adminApi = {
   /** Failed uploads back in the queue, if their bytes are still in storage. */
   inboxRetry: (ids: string[]) =>
     req<{ retried: number; gone: number }>('/admin/inbox/retry', json('POST', { ids })),
-
-  folders: (albumId: string) =>
-    req<{ folders: { id: string; title: string; n: number }[]; loose: number }>(`/admin/albums/${albumId}/folders`),
 
   createFolder: (albumId: string, title: string) =>
     req<{ id: string }>(`/admin/albums/${albumId}/folders`, json('POST', { title })),

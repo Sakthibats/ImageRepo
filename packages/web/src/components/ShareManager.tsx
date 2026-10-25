@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { adminApi, shareState, type ShareRow, type ShareScope } from '../admin.ts';
+import { fetchAlbumDetail } from '../api.ts';
 
 type FolderCount = { id: string; title: string; n: number };
 
@@ -84,8 +85,8 @@ export function ShareManager({ albumId, albumTitle, onClose }: {
 
   useEffect(() => {
     void load();
-    adminApi.folders(albumId)
-      .then((d) => { setFolders(d.folders); setLoose(d.loose); })
+    fetchAlbumDetail(albumId)
+      .then((d) => { setFolders([...d.folders].sort((a, b) => a.title.localeCompare(b.title))); setLoose(d.loose); })
       .catch((e) => setError(e.message));
   }, [albumId]);
 

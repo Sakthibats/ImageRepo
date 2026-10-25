@@ -1,10 +1,4 @@
-import type { AlbumManifest, FolderSummary, MediaItem, MediaPage, OwnerMediaItem } from '@imagerepo/shared';
-
-export interface AlbumSummary {
-  id: string; title: string; n: number;
-  cover: string | null; ver: string | null; updated: number;
-  newest: number | null;
-}
+import type { AlbumDetail, AlbumSummary, MediaItem, MediaPage, OwnerMediaItem } from '@imagerepo/shared';
 
 /**
  * Same-origin requests. The app is served by the Worker itself, so Cloudflare
@@ -18,11 +12,11 @@ async function get<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export const fetchIndex = () =>
-  get<{ ver: string; albums: AlbumSummary[] }>('/a/manifest/index');
+/** Every album with its count and cover. */
+export const fetchAlbums = () => get<{ albums: AlbumSummary[] }>('/a/albums');
 
-export const fetchAlbum = (id: string, ver: string) =>
-  get<AlbumManifest & { items: OwnerMediaItem[]; folders?: FolderSummary[] }>(`/a/manifest/album/${id}/${ver}`);
+/** One album's counts and folders. */
+export const fetchAlbumDetail = (id: string) => get<AlbumDetail>(`/a/albums/${encodeURIComponent(id)}`);
 
 /** What /a/media lists: the library, an album or one of its folders ('loose' for none), or photos with tags. */
 export type Listing =

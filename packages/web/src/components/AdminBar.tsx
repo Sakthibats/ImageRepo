@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { FolderSummary } from '@imagerepo/shared';
-import type { AlbumSummary } from '../api.ts';
+import type { AlbumSummary } from '@imagerepo/shared';
 import type { FolderView } from './FolderStrip.tsx';
 
 const LOOSE = '__loose';

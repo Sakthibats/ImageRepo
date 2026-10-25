@@ -10,9 +10,10 @@ const RETRY_BATCH = 25;
  * The upload queue for one album, or with no album for all of them. Polled
  * every 5s while a service is working through it, otherwise every 30s:
  * nothing changes until one runs, and one starting is still noticed.
- * `onProcessed` fires when the queue shrinks, so new photos can be shown.
+ * `onProcessed` fires when the queue shrinks, with how many are left, so new
+ * photos can be shown.
  */
-export function useBacklog(enabled: boolean, albumId: string | undefined, onProcessed: () => void) {
+export function useBacklog(enabled: boolean, albumId: string | undefined, onProcessed: (left: number) => void) {
   const [summary, setSummary] = useState<InboxSummary | null>(null);
   const [asked, setAsked] = useState(0);
   const processed = useRef(onProcessed);
@@ -33,7 +34,7 @@ export function useBacklog(enabled: boolean, albumId: string | undefined, onProc
           if (stopped) return;
           setSummary(s);
           const left = pending(s.counts);
-          if (left < last && last !== Infinity) processed.current();
+          if (left < last && last !== Infinity) processed.current(left);
           last = left;
           if (left && s.runners.some((r) => r.online)) next = 5_000;
         } catch { /* a blip; ask again */ }

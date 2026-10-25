@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { FolderSummary, OwnerMediaItem } from '@imagerepo/shared';
-import { fetchIndex, fetchAlbum, assetUrl, type AlbumSummary } from './api.ts';
+import type { AlbumDetail, AlbumSummary, FolderSummary, OwnerMediaItem } from '@imagerepo/shared';
+import { fetchAlbums, fetchAlbumDetail, fetchPage, loadAll, assetUrl } from './api.ts';
 import { adminApi } from './admin.ts';
 import { PhotoGrid } from './components/PhotoGrid.tsx';
 import { Lightbox } from './components/Lightbox.tsx';
@@ -73,7 +73,8 @@ function OwnerApp() {
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<AlbumSummary | null>(null);
   const [items, setItems] = useState<OwnerMediaItem[] | null>(null);
-  const [folders, setFolders] = useState<FolderSummary[]>([]);
+  const [detail, setDetail] = useState<AlbumDetail | null>(null);
+  const [albumLoading, setAlbumLoading] = useState(false);
   const [view, setView] = useState<FolderView>('all');
   const [lightbox, setLightbox] = useState<number | null>(null);
   const [selection, setSelection] = useState<Set<string>>(new Set());
@@ -84,51 +85,90 @@ function OwnerApp() {
   const [toast, setToast] = useState<string | null>(null);
   const [sort, setSort] = useState<SortOrder>(loadSort);
   const headRef = useHeadHeight();
+  const folders = detail?.folders ?? [];
+  /** Every photo of albums opened this session, by album id. */
+  const albumCache = useRef(new Map<string, OwnerMediaItem[]>());
+  /** Each album load is numbered; only the latest may set state. */
+  const albumLoad = useRef(0);
+  /** Whose photos `items` holds, so a refresh can keep the grid until the new copy is whole. */
+  const itemsOf = useRef<string | null>(null);
 
   const notify = useCallback((msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 2600);
   }, []);
 
-  const loadIndex = useCallback(async () => {
+  const loadIndex = useCallback(async (): Promise<AlbumSummary[] | null> => {
     try {
-      const d = await fetchIndex();
-      setAlbums(sortAlbums(d.albums));
-      setOpen((cur) => (cur ? d.albums.find((a) => a.id === cur.id) ?? null : null));
-    } catch (e) { setError((e as Error).message); }
+      const { albums: list } = await fetchAlbums();
+      setAlbums(sortAlbums(list));
+      setOpen((cur) => (cur ? list.find((a) => a.id === cur.id) ?? null : null));
+      return list;
+    } catch (e) { setError((e as Error).message); return null; }
   }, []);
 
   useEffect(() => { void loadIndex(); }, [loadIndex]);
 
-  const reloadAlbum = useCallback(async (album: AlbumSummary | null) => {
-    if (!album?.ver) { setItems(album ? [] : null); setFolders([]); return; }
+  /**
+   * Shows an album: its folders and counts, then every page of its photos.
+   * A whole copy from earlier in the session is used again while the album's
+   * count still matches, so going back to an album reads no photos from D1.
+   * `fresh` re-reads anyway: an edit can change an album without changing
+   * its count.
+   */
+  const loadAlbum = useCallback(async (id: string, fresh = false) => {
+    const n = ++albumLoad.current;
+    const live = () => albumLoad.current === n;
     try {
-      const m = await fetchAlbum(album.id, album.ver);
-      setItems(m.items);
-      setFolders(m.folders ?? []);
-    } catch (e) { setError((e as Error).message); }
+      const d = await fetchAlbumDetail(id);
+      if (!live()) return;
+      setDetail(d);
+      const cached = albumCache.current.get(id);
+      if (cached && !fresh && cached.length === d.n) { setItems(cached); itemsOf.current = id; return; }
+
+      // A first look fills in page by page; a refresh keeps the grid as it
+      // was until the new copy is whole, so it never shrinks to one page.
+      const first = itemsOf.current !== id;
+      if (first) { setItems(null); itemsOf.current = id; }
+      setAlbumLoading(true);
+      const all = await loadAll(
+        (after, limit) => fetchPage({ album: id }, { after, limit }),
+        (sofar) => { if (first) setItems(sofar); },
+        live,
+      );
+      if (all) { albumCache.current.set(id, all); setItems(all); }
+    } catch (e) {
+      if (live()) setError((e as Error).message);
+    } finally {
+      if (live()) setAlbumLoading(false);
+    }
   }, []);
 
-  // A selection survives a reload of the same album: the backlog reloads it
-  // as photos finish processing, which can be every few seconds.
-  useEffect(() => { void reloadAlbum(open); }, [open, reloadAlbum]);
+  useEffect(() => {
+    if (open) { void loadAlbum(open.id); return; }
+    albumLoad.current++;
+    itemsOf.current = null;
+    setItems(null); setDetail(null); setAlbumLoading(false);
+  }, [open?.id, loadAlbum]);
   useEffect(() => { setSelection(new Set()); }, [open?.id]);
   // A different album starts on All photos; a refresh of the same one stays put.
   useEffect(() => { setView('all'); }, [open?.id]);
 
-  /** Refresh both the index and the open album after a mutation. */
+  /** After an edit: the album list, and the open album read again if it still exists. */
   const refresh = useCallback(async () => {
-    const d = await fetchIndex().catch(() => null);
-    if (!d) return;
-    setAlbums(sortAlbums(d.albums));
-    const updated = open ? d.albums.find((a) => a.id === open.id) ?? null : null;
-    setOpen(updated);
-    await reloadAlbum(updated);
+    albumCache.current.clear();
+    const list = await loadIndex();
+    if (open && list?.some((a) => a.id === open.id)) await loadAlbum(open.id, true);
     setSelection(new Set());
-  }, [open, reloadAlbum]);
+  }, [open, loadIndex, loadAlbum]);
 
-  // An open album's uploads, or on the album list every album's.
-  const backlog = useBacklog(Boolean(open) || tab === 'albums', open?.id, loadIndex);
+  // An open album's uploads, or on the album list every album's. As photos
+  // finish, counts change; the open album is read again once its queue is
+  // empty, or sooner from the "new" prompt, rather than on every one.
+  const backlog = useBacklog(Boolean(open) || tab === 'albums', open?.id, (left) => {
+    void loadIndex();
+    if (open && left === 0) void loadAlbum(open.id);
+  });
 
   const toggleIn = useCallback((list: { id: string }[]) =>
     (id: string, index: number, shiftKey: boolean) => {
@@ -238,7 +278,7 @@ function OwnerApp() {
         )}
 
         {tab === 'settings' && (
-          <SettingsView onPurged={() => { setOpen(null); void loadIndex(); }} />
+          <SettingsView onPurged={() => { albumCache.current.clear(); setOpen(null); void loadIndex(); }} />
         )}
 
         {tab === 'tags' && (
@@ -330,7 +370,7 @@ function OwnerApp() {
         <span className="muted">{open.n} items</span>
         <div className="push row-gap">
           {inView && inView.length > 1 && sortButton}
-          {inView && inView.length > 0 && (
+          {!albumLoading && inView && inView.length > 0 && (
             <button className="btn small" onClick={() =>
               setSelection((s) => s.size === inView.length ? new Set() : new Set(inView.map((i) => i.id)))}>
               {selection.size === inView.length ? 'Clear' : 'Select all'}
@@ -344,13 +384,21 @@ function OwnerApp() {
       </header>
 
       <BacklogLine summary={backlog.summary} onRetried={backlog.check} />
+      {!albumLoading && items && open.n !== items.length && (
+        <div className="backlog small">
+          <button className="btn small" onClick={() => void loadAlbum(open.id)}>
+            {open.n > items.length ? `${(open.n - items.length).toLocaleString()} new · Show` : 'Album changed · Show'}
+          </button>
+        </div>
+      )}
 
+      {/* Files the library already had are filed at once; the rest arrive as they are processed. */}
       <Uploader albumId={open.id} folder={folder ?? undefined}
-                onDone={() => { void refresh(); backlog.check(); notify('Upload complete'); }} />
+                onDone={() => { void loadIndex(); void loadAlbum(open.id); backlog.check(); notify('Upload complete'); }} />
 
-      {items && (
+      {items && detail && (
         <FolderStrip
-          folders={folders} total={items.length} loose={items.filter((i) => !i.f).length}
+          folders={folders} total={detail.n} loose={detail.loose}
           view={activeView} onView={changeView}
           coverUrl={(id) => assetUrl(id, '320')} allCover={open.cover}
         />
