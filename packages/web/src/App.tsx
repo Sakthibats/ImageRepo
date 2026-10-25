@@ -406,11 +406,8 @@ function OwnerApp() {
         view={activeView}
         onClear={() => setSelection(new Set())}
         onMove={(to) => void act(
-          () => adminApi.addToAlbum(to, selectedIds, 'move', open.id),
+          () => adminApi.moveToAlbum(to, selectedIds),
           `Moved ${selectedIds.length} to ${albums.find((a) => a.id === to)?.title}`)}
-        onCopy={(to) => void act(
-          () => adminApi.addToAlbum(to, selectedIds, 'add'),
-          `Copied ${selectedIds.length} to ${albums.find((a) => a.id === to)?.title}`)}
         onRemove={() => void act(
           () => adminApi.removeFromAlbum(open.id, selectedIds),
           `Removed ${selectedIds.length} from this album`)}
@@ -441,7 +438,7 @@ function OwnerApp() {
 
   /**
    * Selection toolbar for the timeline and tag views. There is no album
-   * context here, so it offers tagging, adding to an album, and deleting —
+   * context here, so it offers tagging, moving to an album, and deleting —
    * but not "remove from album", which would be meaningless.
    */
   function GlobalBar() {
@@ -453,14 +450,14 @@ function OwnerApp() {
         <button className="btn small primary" onClick={() => setTagOpen(true)}>Tag</button>
         <span className="ab-sep" />
         <select className="input slim" value={target} onChange={(e) => setTarget(e.target.value)}>
-          <option value="">Add to album…</option>
+          <option value="">Move to album…</option>
           {(albums ?? []).map((a) => <option key={a.id} value={a.id}>{a.title}</option>)}
         </select>
         <button className="btn small" disabled={!target} onClick={() => {
           const to = target; setTarget('');
-          void act(() => adminApi.addToAlbum(to, selectedIds, 'add'),
-                   `Added ${selectedIds.length} to ${albums?.find((a) => a.id === to)?.title}`);
-        }}>Add</button>
+          void act(() => adminApi.moveToAlbum(to, selectedIds),
+                   `Moved ${selectedIds.length} to ${albums?.find((a) => a.id === to)?.title}`);
+        }}>Move</button>
         <span className="ab-sep" />
         <button className="btn small danger"
                 onClick={() => setDialog({ kind: 'confirmDeleteMedia', ids: selectedIds })}>Delete…</button>
@@ -581,10 +578,9 @@ function OwnerApp() {
             <p className="muted">
               {alsoMedia
                 ? <>The album, its folders and share links go away, and its photos are
-                    deleted from storage for good. Photos that are also in another
-                    album are kept.</>
+                    deleted from storage for good.</>
                 : <>The album, its folders and share links go away. The {album.n} photos
-                    stay in your library and in any other album they belong to.</>}
+                    stay in your library, in no album.</>}
             </p>
             <label className="field check">
               <input type="checkbox" checked={alsoMedia} onChange={(e) => setAlsoMedia(e.target.checked)} />

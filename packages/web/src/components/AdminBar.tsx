@@ -9,7 +9,7 @@ const NEW = '__new';
 /** Floating action bar. Appears only when something is selected. */
 export function AdminBar({
   count, albums, currentAlbum, folders, view,
-  onClear, onMove, onCopy, onRemove, onDelete, onSetCover, onTag, onFile, onNewFolder,
+  onClear, onMove, onRemove, onDelete, onSetCover, onTag, onFile, onNewFolder,
 }: {
   count: number;
   albums: AlbumSummary[];
@@ -18,7 +18,6 @@ export function AdminBar({
   view: FolderView;
   onClear: () => void;
   onMove: (to: string) => void;
-  onCopy: (to: string) => void;
   onRemove: () => void;
   onDelete: () => void;
   /** 'album', or the id of the folder whose cover this becomes. */
@@ -45,7 +44,6 @@ export function AdminBar({
         {others.map((a) => <option key={a.id} value={a.id}>{a.title}</option>)}
       </select>
       <button className="btn small" disabled={!target} onClick={() => { onMove(target); setTarget(''); }}>Move</button>
-      <button className="btn small" disabled={!target} onClick={() => { onCopy(target); setTarget(''); }}>Copy</button>
 
       <span className="ab-sep" />
       <select className="input slim" value="" aria-label="Move to folder"

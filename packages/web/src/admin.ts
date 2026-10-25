@@ -26,8 +26,9 @@ export const adminApi = {
   deleteAlbum: (id: string, alsoMedia: boolean) =>
     req<{ deletedMedia: number }>(`/admin/albums/${id}?media=${alsoMedia ? 'delete' : 'keep'}`, json('DELETE')),
 
-  addToAlbum: (albumId: string, mediaIds: string[], mode: 'add' | 'move', fromAlbum?: string) =>
-    req(`/admin/albums/${albumId}/media`, json('POST', { mediaIds, mode, fromAlbum })),
+  /** From whichever album holds them: a photo lives in one album. */
+  moveToAlbum: (albumId: string, mediaIds: string[]) =>
+    req(`/admin/albums/${albumId}/media`, json('POST', { mediaIds })),
 
   removeFromAlbum: (albumId: string, mediaIds: string[]) =>
     req<{ removed: number }>(`/admin/albums/${albumId}/media`, json('DELETE', { mediaIds })),
