@@ -79,7 +79,8 @@ npm run deploy                   # migrations, web build, Worker deploy, smoke t
 
 - TypeScript in packages/, Python 3.12 in Preprocessing/. Comments say why.
 - Worker tests are `tsx` scripts with `check()`; Python uses pytest.
-- Migrations: new numbered file, additive; `schema.sql` is not updated.
+- Migrations: new numbered file; `schema.sql` is not updated. Additive, except
+  dropping a table once no deployed code uses it (009 did this).
 - Stage names and versions are shared by the service and D1's `media_stages`.
   Bumping a version means "redo this".
 - `.env*` files are secrets and blocked from reading and writing; templates
@@ -101,19 +102,21 @@ npm run deploy                   # migrations, web build, Worker deploy, smoke t
 
 ## Current state (25 October 2026)
 
-- Branch `cli-stages`, ahead of `origin/cli-stages`, not merged to `main`.
-  Production runs `8f5f077` (deployed 25 Oct); migrations 001–008 applied.
-  R2 CORS and the `inbox/` lifecycle rule are set.
-- The library was purged and is being re-added through the browser. The
-  service runs on the laptop (`python -m preprocessing run`); not hosted yet.
-- Verified end to end: photos from laptop and iPhone. Not yet: real iPhone
-  video (HEVC/HDR, whether the picker converts it), the Docker image (never
-  built), hosting.
-- `.env.ingest.example` has uncommitted local edits by the owner; it belonged
-  to the CLI. Ask before touching it.
+- Branch `cli-stages`, with unpushed commits (including the deployed
+  `c002223`), not merged to `main`. Production runs `c002223`; migrations 001–009
+  applied. R2 CORS and the `inbox/` lifecycle rule are set.
+- The CLI is gone, and so are its routes and D1 tables (`ingest_log`,
+  `settings`). Every remaining table is in use.
+- The library was purged and is being re-added through the browser (4 items
+  at last count). The service runs on the laptop (`python -m preprocessing
+  run`); not hosted yet.
+- Verified end to end: photos from laptop and iPhone; the service's online and
+  offline status in the uploader. Not yet: real iPhone video (HEVC/HDR,
+  whether the picker converts it), the Docker image (never built), hosting.
 
 ## Planned next
 
+0. Merge `cli-stages` into `main` and push; production runs this branch.
 1. A backlog mode in the service: claim `/admin/stages/claim` work so a stage
    version bump or a new stage re-processes existing media from `orig/`.
    Stripped JPEGs in `orig/` have lost their EXIF orientation: take it from
