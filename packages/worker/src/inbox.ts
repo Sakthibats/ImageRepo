@@ -42,9 +42,9 @@ const FILES_PER_CALL = 25;
 const PARTS_PER_CALL = 100;
 /** Each record is several D1 statements and an R2 check. */
 const RECORDS_PER_CALL = 20;
-const MAX_ATTEMPTS = 5;
+export const MAX_ATTEMPTS = 5;
 /** Seconds a failed file waits before its next attempt, so a passing outage does not use them all up. */
-const BACKOFF = [60, 300, 1800, 7200];
+export const BACKOFF = [60, 300, 1800, 7200];
 /** An upload nobody came back to finish. R2's lifecycle rule removes its bytes too. */
 const ABANDONED_AFTER = 7 * 86400;
 /** A service checks in every 20s; three missed and it is reported offline. */

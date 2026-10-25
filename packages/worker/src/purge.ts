@@ -27,7 +27,7 @@ const ROUNDS_PER_CALL = 5;
  * Worker tests check by looking for any table that still has rows.
  */
 const TABLES = [
-  'runners', 'uploads', 'media_tags', 'tags', 'media_stages',
+  'stage_sweeps', 'runners', 'uploads', 'media_tags', 'tags', 'media_stages',
   'share_folders', 'share_links', 'album_media', 'folders', 'albums', 'media',
 ];
 

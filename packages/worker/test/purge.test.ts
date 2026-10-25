@@ -13,6 +13,8 @@ console.log('\npurge everything\n');
   await seedMedia(w, 30, 'kids', 5000);
   await w.call('POST', '/admin/shares', { body: { albumId: 'trip' } });
   await w.call('POST', '/admin/tags/apply', { body: { mediaIds: ['0'.repeat(32)], add: ['beach'] } });
+  // A re-run under way: a pass and its claims.
+  await w.call('POST', '/admin/stages/claim', { body: { stage: 'derivatives', version: 9, kind: 'photo', limit: 3 } });
   await w.bucket.put('unrelated/keep-me.txt', 'not ours');
   // A browser upload waiting for the processing service.
   await w.bucket.put(`inbox/${'b'.repeat(32)}.jpg`, 'raw, with GPS');

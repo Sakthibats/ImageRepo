@@ -44,6 +44,10 @@ function positional(sql: string, args: unknown[]): { sql: string; args: unknown[
 /** Every statement run, newest last, so a test can ask SQLite how it ran one. */
 const queries: { sql: string; args: unknown[] }[] = [];
 
+/** How many statements have run so far; with `ranSince`, what one request ran. */
+export const statementCount = () => queries.length;
+export const ranSince = (n: number) => queries.slice(n).map((q) => q.sql);
+
 /** SQLite's plan for the latest statement matching `like`, as one line per step. */
 export function planOf(world: { sqlite: Database.Database }, like: RegExp): string {
   const q = [...queries].reverse().find((x) => like.test(x.sql));
