@@ -8,7 +8,8 @@ import { adminApi, type InboxFile, type InboxStart } from './admin.ts';
  * strips, resizes and records them. Nothing heavy runs here, so a phone only
  * hashes and sends.
  *
- *   hash (2 at a time) → /start in batches → PUT to R2 (6 at a time) → /finish
+ *   hash (2 at a time) → /start in batches (the first as soon as one file is
+ *   hashed) → PUT to R2 (6 at a time) → /finish
  *
  * Large files go up in parts. Picking the same files again after the page
  * closed carries on where it stopped: /start says which parts R2 already has.
@@ -190,9 +191,11 @@ export async function uploadFiles(
   const uploads: Promise<void>[] = [];
   let inHand = 0;
   while (hashing || hashed.length) {
-    // A full batch, or whatever is left once hashing is over, and only while
-    // few enough are in hand that their URLs will not go stale waiting.
-    const batchReady = hashed.length >= START_BATCH || (!hashing && hashed.length > 0);
+    // A full batch; or, while nothing is going up, whatever is hashed so far,
+    // so the first files are on their way, and in the service's queue, while
+    // the rest still hash. Only while few enough are in hand that their URLs
+    // will not go stale waiting.
+    const batchReady = hashed.length >= START_BATCH || (hashed.length > 0 && (!hashing || inHand === 0));
     if (!batchReady || inHand >= AHEAD) {
       await changed.wait();
       continue;

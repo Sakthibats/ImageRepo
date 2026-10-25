@@ -129,4 +129,14 @@ console.log('\nprocessing\n');
     count(w, `SELECT COUNT(*) AS n FROM uploads`) === 0 && !w.bucket.keys('inbox/').length);
 }
 
+console.log('\nmany files\n');
+{
+  const batches: number[] = [];
+  const watched: Api = { ...api, start: (albumId, files, folderId) => { batches.push(files.length); return api.start(albumId, files, folderId); } };
+  const many = Array.from({ length: 30 }, (_, i) => file(`m${i}.jpg`, noise(3000 + i, 100 + i)));
+  const s = await uploadFiles(many, { albumId: 'kids' }, () => {}, { api: watched, put: fetchPut });
+  check('the first files are in the queue before the rest have hashed, and all of them go up',
+    batches[0] < 25 && batches.reduce((n, b) => n + b, 0) === 30 && s.sent === 30, batches.join(','));
+}
+
 finish();
