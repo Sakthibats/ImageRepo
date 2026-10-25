@@ -292,6 +292,22 @@ export async function addMedia(world: ReturnType<typeof makeWorld>, records: Par
   }
 }
 
+/**
+ * Where the counts and sort dates that triggers keep (migration 011) disagree
+ * with the rows they summarise. Empty when everything is in step.
+ */
+export function drift(world: ReturnType<typeof makeWorld>): string[] {
+  const rows = (sql: string) => (world.sqlite.prepare(sql).all() as { d: string }[]).map((r) => r.d);
+  return [
+    ...rows(`SELECT 'album ' || id || ' counts ' || item_count AS d FROM albums
+             WHERE item_count <> (SELECT COUNT(*) FROM album_media WHERE album_id = albums.id)`),
+    ...rows(`SELECT 'folder ' || id || ' counts ' || item_count AS d FROM folders
+             WHERE item_count <> (SELECT COUNT(*) FROM album_media WHERE folder_id = folders.id)`),
+    ...rows(`SELECT 'link ' || am.media_id || ' sorts at ' || IFNULL(am.sort_ts, 'null') AS d
+             FROM album_media am JOIN media m ON m.id = am.media_id WHERE am.sort_ts IS NOT m.sort_ts`),
+  ];
+}
+
 /** n photos in an album, with their objects in R2, and the album baked. */
 export async function seedMedia(
   world: ReturnType<typeof makeWorld>, n: number, album: string, start = 0,

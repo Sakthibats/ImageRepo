@@ -287,8 +287,8 @@ mutations.post('/albums/:id/media', async (c) => {
 
   const from = await albumsOf(c.env, ids);
   const move = c.env.DB.prepare(`
-    INSERT INTO album_media (album_id, media_id, position)
-    SELECT ?1, id, COALESCE(taken_at, 0) FROM media WHERE id = ?2
+    INSERT INTO album_media (album_id, media_id, sort_ts)
+    SELECT ?1, id, sort_ts FROM media WHERE id = ?2
     ON CONFLICT(media_id) DO UPDATE SET album_id = excluded.album_id, folder_id = NULL
       WHERE album_id <> excluded.album_id
   `);

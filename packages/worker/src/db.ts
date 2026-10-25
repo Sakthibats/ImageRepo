@@ -35,13 +35,7 @@ export async function insertMedia(
       raw_meta  = COALESCE(excluded.raw_meta, media.raw_meta)
   `);
 
-  const link = db.prepare(`
-    INSERT INTO album_media (album_id, media_id, position, folder_id)
-    VALUES (?1, ?2, ?3, ?4)
-    ON CONFLICT DO NOTHING
-  `);
-
-
+  const link = linkToAlbum(db);
   const statements: D1PreparedStatement[] = [];
   for (const r of records) {
     statements.push(media.bind(
@@ -53,9 +47,8 @@ export async function insertMedia(
       r.thumbhash ?? null, r.caption ?? null, r.origName, r.sourcePath ?? null,
       r.rawMeta ? JSON.stringify(r.rawMeta).slice(0, MAX_RAW_META) : null,
     ));
-    // taken_at ordering gives a sensible default position within the album.
     for (const albumId of r.albums) {
-      statements.push(link.bind(albumId, r.id, r.takenAt ?? 0, o.folderOf?.get(r.id) ?? null));
+      statements.push(link.bind(albumId, r.id, o.folderOf?.get(r.id) ?? null));
     }
 
     // One statement for all of a record's stages, to keep the batch short.
@@ -74,6 +67,19 @@ export async function insertMedia(
 
   await db.batch(statements);
   return records.length;
+}
+
+/**
+ * Files a photo the library has into an album (?1, ?2) and folder (?3), unless
+ * it is in an album already. The link carries the photo's sort date, which
+ * album pages are ordered by; a trigger keeps it in step after that.
+ */
+export function linkToAlbum(db: D1Database) {
+  return db.prepare(`
+    INSERT INTO album_media (album_id, media_id, folder_id, sort_ts)
+    SELECT ?1, id, ?3, sort_ts FROM media WHERE id = ?2
+    ON CONFLICT DO NOTHING
+  `);
 }
 
 export interface AlbumRow {

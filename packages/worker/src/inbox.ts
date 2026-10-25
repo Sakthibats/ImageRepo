@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { MEDIA_EXT, r2Key, type MediaRecord } from '@imagerepo/shared';
 import type { Env } from './types.js';
 import { r2s3 } from './s3.js';
-import { insertMedia } from './db.js';
+import { insertMedia, linkToAlbum } from './db.js';
 import { bakeAlbum, bakeIndex } from './manifest.js';
 
 /**
@@ -128,11 +128,7 @@ inbox.post('/start', async (c) => {
       .bind(...elsewhere).all<{ id: string; title: string }>()).results.map((r) => [r.id, r.title])
     : []);
 
-  const link = db.prepare(`
-    INSERT INTO album_media (album_id, media_id, position, folder_id)
-    SELECT ?1, id, COALESCE(taken_at, 0), ?3 FROM media WHERE id = ?2
-    ON CONFLICT DO NOTHING
-  `);
+  const link = linkToAlbum(db);
   const links: D1PreparedStatement[] = [];
   const results: StartResult[] = [];
   const ts = now();
