@@ -109,18 +109,13 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 
 ## Current state (25 October 2026)
 
-- Work happens on `main`. `cli-stages` is merged into it (PR #1, then locally
-  for the deployed `c002223`) and can be deleted. `main` is ahead of
-  `origin/main`, unpushed. Production runs `c002223`; migrations 001–009
-  applied. Not yet deployed:
-  - the quieter offline status;
-  - one album per photo (migration 010; production had no photo in two, so
-    the unique index applies cleanly). Copy/Add to album became Move;
-  - the album backlog line, per-album counts on the album list, and Retry
-    without re-upload. The uploader now only sends; processing shows in the
-    backlog line. Not yet tried in a browser (Vite proxies to production,
-    which lacks the routes until deployed).
-  R2 CORS and the `inbox/` lifecycle rule are set.
+- Work happens on `main`. `cli-stages` is merged into it and can be deleted.
+  `main` is unpushed: `origin/main` is still PR #1's merge (`2eb7376`).
+  Production runs `e02131a` (one album per photo, the album backlog line,
+  per-album counts, Retry without re-upload), checked in a browser; migrations
+  001–010 applied. Not yet deployed: the 7-day inbox fixes (a gone upload fails
+  at once, `/start` re-sends it, retries back off 1m/5m/30m/2h in
+  `lease_until`). R2 CORS and the `inbox/` lifecycle rule are set.
 - The CLI is gone, and so are its routes and D1 tables (`ingest_log`,
   `settings`). Every remaining table is in use.
 - The library was purged and is being re-added through the browser. The
@@ -135,19 +130,13 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 
 ## Planned next
 
-0. Push `main` (production's code is on it only locally), then deploy it and
-   check the backlog line in a browser.
-1. Close the 7-day gap: R2 expires `inbox/` after 7 days while D1 still says
-   `ready`. Treat a missing inbox object as a `PermanentError` in the service;
-   have `/start` re-check a waiting file's bytes and ask for a fresh upload;
-   back off between retries (`/fail` requeues at once, so a network blip burns
-   all 5 attempts). Then add "kept for 7 days" to the offline message.
-2. Before the bulk upload: bakes are a full album rebuild per `/complete`
+0. Push `main`; deploy the 7-day inbox fixes.
+1. Before the bulk upload: bakes are a full album rebuild per `/complete`
    (≤20 records), quadratic for big albums; batch them and consider paged
    manifests. Measure service throughput on ~1,000 files first.
-3. A backlog mode in the service: claim `/admin/stages/claim` work so a stage
+2. A backlog mode in the service: claim `/admin/stages/claim` work so a stage
    version bump or a new stage re-processes existing media from `orig/`.
    Stripped JPEGs in `orig/` have lost their EXIF orientation: take it from
    `raw_meta.Orientation`, or rotated photos come out sideways.
-4. Host the service (Docker image exists; any always-on box or Cloudflare Containers).
-5. Faces (detect + embed from the 1024px copy, local model, owner-only), then objects.
+3. Host the service (Docker image exists; any always-on box or Cloudflare Containers).
+4. Faces (detect + embed from the 1024px copy, local model, owner-only), then objects.

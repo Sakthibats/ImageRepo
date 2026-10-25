@@ -121,13 +121,14 @@ function ServiceStatus({ runners, waiting }: { runners: Runner[]; waiting: numbe
       </span>
     );
   }
-  // Not an error: uploads are kept until it runs. Details stay in the tooltip.
+  // Not an error: uploads are kept until it runs, as long as R2 keeps inbox/.
+  // Details stay in the tooltip.
   const last = runners[0];
   const detail = `${last ? `Last seen on ${last.name} ${ago(last.lastSeen)}. ` : ''}Start it with: python -m preprocessing run`;
   return (
     <span className="service off" title={detail}>
       <span className="dot" />
-      Processing offline · {waiting ? 'these are processed when it’s back' : 'uploads will wait'}
+      Processing offline · {waiting ? 'these are kept for 7 days until it’s back' : 'uploads will wait up to 7 days'}
     </span>
   );
 }
