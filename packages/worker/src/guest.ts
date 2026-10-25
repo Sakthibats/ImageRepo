@@ -1,11 +1,10 @@
 import { Hono } from 'hono';
 import type { Env } from './types.js';
-import type { MediaItem } from '@imagerepo/shared';
 import {
-  lookupShare, verifyPasscode, signSession, verifySession, assetTag, verifyAssetTag,
-  IN_SCOPE, FOLDER_IN_SCOPE,
+  lookupShare, verifyPasscode, signSession, verifySession, assetTagger, verifyAssetTag,
+  IN_SCOPE, type ShareRow,
 } from './share.js';
-import { summariseFolders, type FolderRow, type MemberRow } from './manifest.js';
+import { folderSummaries, listMedia, PAGE_MAX } from './listing.js';
 
 /**
  * Guest routes. These must be reachable WITHOUT Cloudflare Access, so the
@@ -13,8 +12,8 @@ import { summariseFolders, type FolderRow, type MemberRow } from './manifest.js'
  *
  * Nothing here trusts the client beyond the share token and the HMAC tags the
  * server itself issued. Guests cannot enumerate: every asset request proves
- * the media id was part of the album this token grants, and D1 confirms it is
- * still within the folders the link shares.
+ * the media id was handed to this link, and D1 confirms it is still within
+ * the folders the link shares.
  */
 export const guest = new Hono<{ Bindings: Env }>({ strict: false });
 
@@ -52,55 +51,63 @@ guest.post('/:token/session', async (c) => {
     ).bind(Math.floor(Date.now() / 1000), share.token_hash).run(),
   );
 
-  const payload = await buildGuestManifest(c.env, share.token_hash, share.album_id, session.s);
+  const payload = await guestAlbum(c.env, share, session.s);
 
   c.header('set-cookie',
     `${COOKIE}=${cookie}; Path=/s/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_TTL}`);
   return c.json({ ...payload, allowDownload: session.d }, 200, noStore);
 });
 
-async function buildGuestManifest(env: Env, tokenHash: string, albumId: string, shareId: string) {
-  const album = await env.DB.prepare(`SELECT id, title FROM albums WHERE id = ?1`)
-    .bind(albumId).first<{ id: string; title: string }>();
-
-  // Only what this link shares: its folders, and the loose photos if it says so.
-  const { results } = await env.DB.prepare(`
-    SELECT m.id, m.kind, m.width, m.height, m.taken_at, m.thumbhash, m.duration_ms, m.caption,
-           am.folder_id
-    FROM share_links s
-    JOIN album_media am ON am.album_id = s.album_id
-    JOIN media m ON m.id = am.media_id
-    WHERE s.token_hash = ?1 AND ${IN_SCOPE}
-    ORDER BY COALESCE(m.taken_at, 0), m.id
-  `).bind(tokenHash).all();
+/**
+ * What the viewer needs before the photos: the album's name, how many items
+ * the link shows, and its folders. Counts come from rows, not from counting
+ * photos. No coordinates, ever.
+ */
+async function guestAlbum(env: Env, share: ShareRow, shareId: string) {
+  const album = await env.DB.prepare(`
+    SELECT a.id, a.title, a.item_count AS n,
+           (SELECT COALESCE(SUM(item_count), 0) FROM folders WHERE album_id = a.id) AS filed
+    FROM albums a WHERE a.id = ?1
+  `).bind(share.album_id).first<{ id: string; title: string; n: number; filed: number }>();
+  const n = album?.n ?? 0;
+  const loose = n - (album?.filed ?? 0);
 
   // Names of folders outside the link are never sent, and nor are empty ones.
-  const { results: folderRows } = await env.DB.prepare(`
-    SELECT f.id, f.title, f.cover_id
-    FROM share_links s JOIN folders f ON f.album_id = s.album_id
-    WHERE s.token_hash = ?1 AND ${FOLDER_IN_SCOPE}
-  `).bind(tokenHash).all<FolderRow>();
-  const folders = summariseFolders(folderRows, results as unknown as MemberRow[]).filter((f) => f.n > 0);
+  const folders = await folderSummaries(env.DB, { share: share.token_hash });
+  const showsLoose = share.scope === 'all' || share.include_loose === 1;
+  const count = share.scope === 'all' ? n
+    : folders.reduce((sum, f) => sum + f.n, 0) + (showsLoose ? loose : 0);
 
-  // Queried column-by-column rather than SELECT *, so lat/lon/place cannot
-  // reach a guest even by accident.
-  const items: (MediaItem & { t2: string })[] = [];
-  for (const r of results as any[]) {
-    items.push({
-      id: r.id,
-      k: r.kind,
-      w: r.width ?? 0,
-      h: r.height ?? 0,
-      ...(r.taken_at ? { t: r.taken_at } : {}),
-      ...(r.thumbhash ? { th: r.thumbhash } : {}),
-      ...(r.duration_ms ? { d: r.duration_ms } : {}),
-      ...(r.caption ? { c: r.caption } : {}),
-      ...(r.folder_id ? { f: r.folder_id } : {}),
-      t2: await assetTag(env, shareId, r.id),
-    });
-  }
-  return { album: albumId, title: album?.title ?? albumId, count: items.length, items, folders };
+  // A cover may not be on the pages loaded yet, so it comes with its own tag.
+  const tag = await assetTagger(env, shareId);
+  for (const f of folders) if (f.cover) f.coverTag = await tag(f.cover);
+
+  return {
+    album: share.album_id, title: album?.title ?? share.album_id,
+    count, loose: showsLoose ? loose : 0, folders,
+  };
 }
+
+/**
+ * A page of what the link shows, oldest first unless `order=desc`, each item
+ * with the tag that lets this guest load it. Needs the session cookie, so a
+ * passcode protects the photos and not only the first screen.
+ */
+guest.get('/:token/media', async (c) => {
+  const share = await lookupShare(c.env.DB, c.req.param('token'));
+  if (!share) return c.json({ error: 'invalid or expired link' }, 404, noStore);
+  const cookie = new RegExp(`${COOKIE}=([^;]+)`).exec(c.req.header('cookie') ?? '')?.[1];
+  const session = cookie ? await verifySession(c.env, cookie) : null;
+  if (!session || session.s !== share.token_hash.slice(0, 16)) return c.json({ error: 'no session' }, 401, noStore);
+
+  const page = await listMedia(c.env.DB, { by: 'share', tokenHash: share.token_hash }, 'guest', {
+    order: c.req.query('order') === 'desc' ? 'desc' : 'asc',
+    after: c.req.query('after'), limit: Number(c.req.query('limit')) || PAGE_MAX,
+  });
+  const tag = await assetTagger(c.env, session.s);
+  const items = await Promise.all(page.items.map(async (i) => ({ ...i, t2: await tag(i.id) })));
+  return c.json({ items, next: page.next }, 200, noStore);
+});
 
 /** Serves one asset to a guest. */
 guest.get('/:token/a/:id/:variant', async (c) => {

@@ -1,5 +1,5 @@
 // Share links limited to some folders, against an in-memory Worker.
-import { makeWorld, seedMedia, check, finish } from './harness.js';
+import { makeWorld, seedMedia, planOf, check, finish } from './harness.js';
 
 type World = ReturnType<typeof makeWorld>;
 
@@ -23,10 +23,19 @@ const kidsFolder = (await w.call('POST', '/admin/albums/kids/folders', { body: {
 async function share(body: Record<string, unknown>) {
   return w.call('POST', '/admin/shares', { body: { albumId: 'trip', ...body } });
 }
+/** What a guest's browser gets: the session, then every page of photos. */
 async function open(world: World, token: string) {
   const r = await world.call('POST', `/s/${token}/session`, { auth: 'none' });
   const cookie = (r.headers.get('set-cookie') ?? '').split(';')[0];
-  return { ...r.json, status: r.status, cookie, raw: JSON.stringify(r.json) };
+  const items: any[] = [];
+  let after = '';
+  while (r.status === 200) {
+    const p = await world.call('GET', `/s/${token}/media?limit=4${after ? `&after=${after}` : ''}`, { auth: 'none', cookie });
+    items.push(...p.json.items);
+    after = p.json.next ?? '';
+    if (!after) break;
+  }
+  return { ...r.json, items, status: r.status, cookie, raw: JSON.stringify(r.json) + JSON.stringify(items) };
 }
 async function asset(token: string, cookie: string, id: string, tag: string) {
   return (await w.call('GET', `/s/${token}/a/${id}/320?t=${encodeURIComponent(tag)}`, { auth: 'none', cookie })).status;
@@ -41,15 +50,32 @@ check('guests still get no location', !/"(lat|lon|place)"/.test(g.raw));
 
 const one = await share({ scope: 'folders', folderIds: [A] });
 const g1 = await open(w, one.json.token);
-check('a folder-only link shows just that folder', g1.count === 5 && g1.items.every((i: any) => i.f === A));
+check('a folder-only link shows just that folder', g1.count === 5 && g1.items.length === 5 && g1.items.every((i: any) => i.f === A));
+check('its counts come without the photos', g1.loose === 0 && g1.folders[0].n === 5 && !('items' in (await w.call('POST', `/s/${one.json.token}/session`, { auth: 'none' })).json));
 check('and names no other folder', g1.folders.length === 1 && !g1.raw.includes('Secret') && !g1.raw.includes('Day 2'));
 check('guest "All photos" is oldest first', g1.items.map((i: any) => i.id).join() === trip.slice(0, 5).join());
 
 const withLoose = await open(w, (await share({ scope: 'folders', folderIds: [A, B], includeLoose: true })).json.token);
-check('folders plus loose photos', withLoose.count === 15 && withLoose.items.filter((i: any) => !i.f).length === 5);
+check('folders plus loose photos', withLoose.count === 15 && withLoose.loose === 5 &&
+  withLoose.items.length === 15 && withLoose.items.filter((i: any) => !i.f).length === 5);
 
 const looseOnly = await open(w, (await share({ scope: 'folders', folderIds: [], includeLoose: true })).json.token);
-check('loose photos alone', looseOnly.count === 5 && looseOnly.folders.length === 0);
+check('loose photos alone', looseOnly.count === 5 && looseOnly.items.length === 5 && looseOnly.folders.length === 0);
+check('a whole-album link counts everything', g.count === 20 && g.loose === 5 && g.items.length === 20);
+const guestPlan = planOf(w, /FROM share_links s JOIN album_media am/);
+check('a guest page is one index range', /idx_am_album_sort/.test(guestPlan) && !/TEMP B-TREE/.test(guestPlan), guestPlan);
+
+const pages = (token: string, cookie?: string) =>
+  w.call('GET', `/s/${token}/media`, { auth: 'none', ...(cookie ? { cookie } : {}) });
+check('pages need the session', (await pages(one.json.token)).status === 401);
+check("another link's session does not open them", (await pages(one.json.token, g.cookie)).status === 401);
+const locked = await share({ passcode: 'hunter2' });
+const noCode = await w.call('POST', `/s/${locked.json.token}/session`, { auth: 'none' });
+check('a passcode link gives no counts or photos without the passcode',
+  noCode.status === 401 && !('count' in noCode.json) && (await pages(locked.json.token)).status === 401);
+const coverTag = g1.folders[0].coverTag;
+check('a folder cover comes with the tag that loads it',
+  await asset(one.json.token, g1.cookie, g1.folders[0].cover, coverTag) === 200);
 
 const nothing = await share({ scope: 'folders', folderIds: [] });
 check('a link must show something', nothing.status === 400);
@@ -102,6 +128,7 @@ check('the share list says what each link shows', listed?.folders[0].title === '
 
 await w.call('POST', `/admin/shares/${one.json.tokenHash}/revoke`);
 check('revoking stops assets at once', await asset(one.json.token, g1.cookie, inA.id, inA.t2) === 403);
+check('and pages', (await pages(one.json.token, g1.cookie)).status === 404);
 
 // Links made before scopes existed.
 w.sqlite.prepare(`INSERT INTO share_links (token_hash, album_id, created_at) VALUES ('old', 'kids', 0)`).run();

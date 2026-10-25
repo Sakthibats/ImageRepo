@@ -8,7 +8,7 @@ import type { Env } from './types.js';
  *
  *  1. The share TOKEN in the URL. Long-lived, revocable, stored only as a
  *     sha256 hash so a database dump exposes no live link.
- *  2. Per-asset HMAC tags handed out with the manifest. These authorise one
+ *  2. Per-asset HMAC tags handed out with each page. These authorise one
  *     media id within one album, are stateless to verify, and are bucketed by
  *     the hour so every viewer of a link shares the same URLs — and therefore
  *     the same edge cache entries. Per-session tokens would give a 0% cache
@@ -48,13 +48,18 @@ function currentBucket(at = Date.now()): number {
   return Math.floor(at / 1000 / BUCKET_SECONDS);
 }
 
-/** Tag authorising one media id, under one share, for one time bucket. */
-export async function assetTag(
-  env: Env, shareId: string, mediaId: string, bucket = currentBucket(),
-): Promise<string> {
+/**
+ * Signs tags authorising media ids under one share, for one time bucket. The
+ * key is imported once, so a page of tags costs one import, not one per item.
+ */
+export async function assetTagger(
+  env: Env, shareId: string, bucket = currentBucket(),
+): Promise<(mediaId: string) => Promise<string>> {
   const key = await hmacKey(requireKey(env));
-  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(`${shareId}.${mediaId}.${bucket}`));
-  return b64url(new Uint8Array(sig)).slice(0, TAG_LENGTH);
+  return async (mediaId) => {
+    const sig = await crypto.subtle.sign('HMAC', key, enc.encode(`${shareId}.${mediaId}.${bucket}`));
+    return b64url(new Uint8Array(sig)).slice(0, TAG_LENGTH);
+  };
 }
 
 /**
@@ -67,7 +72,7 @@ export async function verifyAssetTag(
   if (!tag || tag.length !== TAG_LENGTH) return false;
   const now = currentBucket();
   for (const bucket of [now, now - 1]) {
-    const expected = await assetTag(env, shareId, mediaId, bucket);
+    const expected = await (await assetTagger(env, shareId, bucket))(mediaId);
     if (timingSafe(expected, tag)) return true;
   }
   return false;
@@ -147,7 +152,7 @@ export interface ShareRow {
 /**
  * True for an album_media row `am` that share link `s` shows: everything for
  * an 'all' link, otherwise its folders and, if it says so, the loose photos.
- * The guest manifest and the asset route both use this one definition.
+ * Guest pages, folder covers and the asset route all use this one definition.
  */
 export const IN_SCOPE = `(
   s.scope = 'all'

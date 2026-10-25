@@ -101,6 +101,8 @@ export interface FolderSummary {
   cover: string | null;
   /** True when the owner picked the cover rather than it being worked out. */
   coverPinned?: boolean;
+  /** Guests only: the tag that lets them load the cover, which may not be on a page they have yet. */
+  coverTag?: string;
   newest: number | null;      // taken_at of the most recent item, for ordering
 }
 
