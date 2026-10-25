@@ -51,15 +51,15 @@ sequenceDiagram
   S->>W: /admin/inbox/claim
   S->>R2: download, check the hash, run the stages, upload orig/ drv/ post/ prev/
   S->>W: /admin/inbox/complete (GPS included, for D1)
-  W->>R2: new album manifest; delete the inbox copy
+  W->>R2: delete the inbox copy
 ```
 
 - Open an album (or a folder in it) and pick files; they are filed there. A file the
   library already has is not uploaded again, only filed into this album.
 - Picking the same files again after an interruption resumes: only the parts R2 is
   missing are sent.
-- Photos appear as they are processed, within seconds. Once uploading finishes, the
-  page can be closed.
+- An open album shows newly processed photos once its queue is empty, or straight away
+  from its "new · Show" prompt. Once uploading finishes, the page can be closed.
 - The uploader says whether a processing service is running. If none is, uploads still
   go in and wait in storage (seven days at most) until one starts.
 
@@ -96,7 +96,6 @@ content never changes, and browsers cache it forever.
 | `orig/<id>.<ext>` | the original, metadata removed (videos as MP4) |
 | `drv/<id>/320.avif`, `1024`, `2048` | resized copies for the grid, tablets and the lightbox |
 | `post/<id>.jpg`, `prev/<id>.mp4` | a video's poster frame; a 720p H.264 preview for HEVC |
-| `man/album/<album>.owner.<ver>.json`, `man/index.owner.current.json` | baked album lists the app reads |
 
 **D1** holds the relationships:
 
@@ -125,8 +124,11 @@ erDiagram
 
 A photo is in one album (or none, once removed from it), and in at most one of its
 folders (folders are one level deep). An upload of a file that is in another album is
-refused, naming that album. Filing a photo changes one `album_media` row; nothing in R2 moves. Any change
-to an album re-bakes its manifest under a new version, which the app then loads.
+refused, naming that album. Filing a photo changes one `album_media` row; nothing in R2 moves.
+
+The app reads D1 live, a page of up to 500 photos at a time, so a change shows on the
+next read. Each page is one index range, and album and folder counts are kept on their
+rows by triggers, so reads stay small on Cloudflare's free plan.
 
 ### Sharing
 

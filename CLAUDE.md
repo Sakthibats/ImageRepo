@@ -17,7 +17,7 @@ setting it up.
 ```
 browser  hash → POST /admin/inbox/start → PUT inbox/{id}.{ext} (presigned, parts >64MB) → /finish
 service  /admin/inbox/claim → download, re-hash → stages → R2 orig/ drv/ post/ prev/
-         → /admin/inbox/complete (Worker writes D1, bakes album, deletes inbox copy)
+         → /admin/inbox/complete (Worker writes D1, deletes inbox copy)
          /admin/inbox/heartbeat every 20s → `runners`
 web      /admin/inbox/summary → album backlog line (service online/offline, waiting,
          processing, failed) and per-album counts; /admin/inbox/retry requeues failed
@@ -34,6 +34,7 @@ Browser side: `packages/web/src/upload.ts` (sending only) and
 ```
 packages/shared/   MediaRecord, r2Key, MEDIA_EXT: the contract every part uses
 packages/worker/   Hono Worker: /admin (owner + service), /a (owner reads), /s (guests)
+  src/listing.ts   listMedia(scope, shape): every way of browsing, a page at a time
   src/inbox.ts     browser uploads and the service's queue
   src/s3.ts        presigned URLs and multipart, via R2's S3 API (aws4fetch)
   test/            Node: Hono app, D1 as SQLite, R2 as a Map, a fake S3 endpoint
@@ -68,8 +69,13 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
   cached forever. The service re-hashes every upload; a mismatch is refused.
 - **The Worker is the only writer to D1.** The service writes bytes to R2 and
   sends records to the Worker.
-- **The web app reads baked JSON**, not D1. Any write that changes an album must
-  `bakeAlbum` it.
+- **Every read is a page.** All listings (library, album, folder, share link,
+  tags) go through `listMedia(scope, shape)` in `listing.ts`: one index range,
+  at most 500 rows. A new way to browse (a person, an object) is a new scope.
+  Counts live on rows (`albums.item_count`, `folders.item_count`) and pages
+  sort by `album_media.sort_ts`, all kept by triggers (migration 011); a new
+  album link copies `media.sort_ts` (`linkToAlbum`). Tests check pages with
+  `planOf` (no `TEMP B-TREE`).
 - **Auth.** `/admin` takes a verified Access JWT or the `ADMIN_TOKEN` bearer;
   JWTs are verified, never trusted by header. The service's Access service
   token (`PREPROCESS_CLIENT_ID`) is held to `SERVICE_PATHS` in `auth.ts`.
@@ -98,6 +104,10 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 
 - Access fronts the workers.dev hostname too, so the service reaches the
   Worker with `CF-Access-Client-Id/Secret` headers and no bearer.
+- Free plan, staying there: 10 ms CPU a request, 5M D1 rows read and 100k
+  written a day. A `COUNT` reads every row it counts; a sort without an index
+  reads the whole table. The web keeps opened albums for the session and does
+  not re-read one on every processed photo.
 - D1 allows 100 bound parameters; lists of ids go in `IN (...)` chunks of 90.
   Inbox calls are capped (25 files, 20 records) to stay inside Worker limits.
 - R2 CORS (`packages/worker/r2-cors.json`) allows PUT from the app's origin
@@ -115,7 +125,8 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
   per-album counts, Retry without re-upload), checked in a browser; migrations
   001–010 applied. Not yet deployed: the 7-day inbox fixes (a gone upload fails
   at once, `/start` re-sends it, retries back off 1m/5m/30m/2h in
-  `lease_until`). R2 CORS and the `inbox/` lifecycle rule are set.
+  `lease_until`), and live reads (migration 011, `listMedia`, no more baking).
+  R2 CORS and the `inbox/` lifecycle rule are set.
 - The CLI is gone, and so are its routes and D1 tables (`ingest_log`,
   `settings`). Every remaining table is in use.
 - The library was purged and is being re-added through the browser. The
@@ -130,13 +141,21 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 
 ## Planned next
 
-0. Push `main`; deploy the 7-day inbox fixes.
-1. Before the bulk upload: bakes are a full album rebuild per `/complete`
-   (≤20 records), quadratic for big albums; batch them and consider paged
-   manifests. Measure service throughput on ~1,000 files first.
+0. Push `main`; deploy (stop the service first). Then, once the app checks
+   out: delete the `man/` objects in R2, take `man/` out of `PREFIXES`, and a
+   migration 012 drops `albums.manifest_ver` and `album_media.position`.
+1. Before the bulk upload, measure ~1,000 files: D1 rows read and written per
+   photo, CPU per request. That sets the daily pace on the free plan. Only if
+   the numbers say so: load album pages on scroll (web only, same API),
+   version-keyed browser caching, exact upload counts by trigger.
 2. A backlog mode in the service: claim `/admin/stages/claim` work so a stage
    version bump or a new stage re-processes existing media from `orig/`.
    Stripped JPEGs in `orig/` have lost their EXIF orientation: take it from
    `raw_meta.Orientation`, or rotated photos come out sideways.
 3. Host the service (Docker image exists; any always-on box or Cloudflare Containers).
-4. Faces (detect + embed from the 1024px copy, local model, owner-only), then objects.
+4. Faces (detect + embed from the 1024px copy, local model, owner-only), then
+   objects. Agreed shape, not built: everything is a tag. `tags.kind` (yours,
+   person, object), `media_tags.source` (owner or model@version) and `score`;
+   a `faces` table holds boxes linked to a person tag; embeddings go to R2
+   under an owner-only `emb/` (too big for D1), clustered by the service. Each
+   is a `listMedia` scope; paging a big tag may need `sort_ts` on `media_tags`.
