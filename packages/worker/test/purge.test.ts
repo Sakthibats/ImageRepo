@@ -14,8 +14,6 @@ console.log('\npurge everything\n');
   await w.call('POST', '/admin/shares', { body: { albumId: 'trip' } });
   await w.call('POST', '/admin/tags/apply', { body: { mediaIds: ['0'.repeat(32)], add: ['beach'] } });
   await w.bucket.put('unrelated/keep-me.txt', 'not ours');
-  // Album JSON baked before reads went live.
-  await w.bucket.put('man/album/trip.owner.abc.json', '{}');
   // A browser upload waiting for the processing service.
   await w.bucket.put(`inbox/${'b'.repeat(32)}.jpg`, 'raw, with GPS');
   w.sqlite.prepare(`INSERT INTO uploads (id, kind, ext, bytes, orig_name, album_id, state, created_at, updated_at)

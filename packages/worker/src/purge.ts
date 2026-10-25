@@ -12,12 +12,8 @@ export const purge = new Hono<{ Bindings: Env }>({ strict: false });
 
 export const PURGE_PHRASE = 'purge everything';
 
-/**
- * Everything the library writes lives under these. Other keys are left alone.
- * man/ holds album JSON baked before reads went live (migration 011); nothing
- * writes it now, and it goes from this list once production's copies are deleted.
- */
-const PREFIXES = ['orig/', 'drv/', 'post/', 'prev/', 'man/', 'inbox/'];
+/** Everything the library writes lives under these. Other keys are left alone. */
+const PREFIXES = ['orig/', 'drv/', 'post/', 'prev/', 'inbox/'];
 
 /**
  * List-and-delete rounds per request, 1000 objects each. Small enough to stay

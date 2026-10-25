@@ -93,7 +93,7 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 - TypeScript in packages/, Python 3.12 in Preprocessing/. Comments say why.
 - Worker tests are `tsx` scripts with `check()`; Python uses pytest.
 - Migrations: new numbered file; `schema.sql` is not updated. Additive, except
-  dropping a table once no deployed code uses it (009 did this).
+  dropping a table or column once no deployed code uses it (009, 012).
 - Stage names and versions are shared by the service and D1's `media_stages`.
   Bumping a version means "redo this".
 - `.env*` files are secrets and blocked from reading and writing; templates
@@ -127,8 +127,8 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
   the uploader queueing its first files as soon as they are hashed, and the
   backlog line saying "retrying in N min" for a file backing off. The owner
   checked it in a browser. R2 CORS and the `inbox/` lifecycle rule are set.
-- Left over from baking: `man/` objects in R2, `man/` in `PREFIXES`, and the
-  unused columns `albums.manifest_ver` and `album_media.position`.
+- Baking is fully gone: `man/` deleted from R2 and from `PREFIXES`; migration
+  012 (not yet applied) drops `albums.manifest_ver` and `album_media.position`.
 - The library holds 10 items (9 photos, 1 video) in one album. D1 use is small:
   about 40k rows read and 1.5k written a day, mostly the service polling.
 - The service runs on the laptop (`python -m preprocessing run`); not hosted.
@@ -142,9 +142,6 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 
 ## Planned next
 
-0. Finish the baking cleanup: delete `man/` in R2, take `man/` out of
-   `PREFIXES` (and `purge.test.ts`), and migration 012 drops
-   `albums.manifest_ver` and `album_media.position`.
 1. Before the bulk upload, a run of ~1,000 files including real iPhone video:
    D1 rows read and written per photo, CPU per request, service throughput.
    That sets the daily pace on the free plan (100k rows written a day). Also
