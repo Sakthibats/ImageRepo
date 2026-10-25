@@ -119,16 +119,17 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 
 ## Current state (26 October 2026)
 
-- Work happens on `main`, pushed; `origin/main` is `ba4f011`. `cli-stages` is
-  merged and can be deleted (locally and on origin).
-- Production runs `ba4f011`, deployed 25 Oct; migrations 001–011 applied. In
-  it: live reads (`listMedia`, no baking), the 7-day inbox fixes (a gone
-  upload fails at once, `/start` re-sends it, retries back off 1m/5m/30m/2h),
-  the uploader queueing its first files as soon as they are hashed, and the
-  backlog line saying "retrying in N min" for a file backing off. The owner
-  checked it in a browser. R2 CORS and the `inbox/` lifecycle rule are set.
-- Baking is fully gone: `man/` deleted from R2 and from `PREFIXES`; migration
-  012 (not yet applied) drops `albums.manifest_ver` and `album_media.position`.
+- Work happens on `main`. Pushed and deployed through `38e1ebd` (25 Oct);
+  migrations 001–012 applied. `cli-stages` is merged and can be deleted
+  (locally and on origin).
+- Production has live reads (`listMedia`, no baking), the 7-day inbox fixes
+  (a gone upload fails at once, `/start` re-sends it, retries back off
+  1m/5m/30m/2h), the uploader queueing its first files as soon as they are
+  hashed, and the backlog line saying "retrying in N min" for a file backing
+  off. The owner checked it in a browser. R2 CORS and the `inbox/` lifecycle
+  rule are set.
+- Baking is fully gone: `man/` is deleted from R2 and `PREFIXES`, and 012
+  dropped `albums.manifest_ver` and `album_media.position`.
 - The library holds 10 items (9 photos, 1 video) in one album. D1 use is small:
   about 40k rows read and 1.5k written a day, mostly the service polling.
 - The service runs on the laptop (`python -m preprocessing run`); not hosted.
