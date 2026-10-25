@@ -68,3 +68,16 @@ class WorkerApi:
 
     def summary(self) -> dict:
         return self._call('GET', '/admin/inbox/summary')
+
+    def stage_claim(self, stage: str, version: int, kind: str, limit: int, lease_seconds: int) -> dict:
+        """Media already in the library that `stage` at `version` has yet to run on."""
+        return self._call('POST', '/admin/stages/claim', {
+            'runner': self.runner, 'stage': stage, 'version': version, 'kind': kind,
+            'limit': limit, 'leaseSeconds': lease_seconds,
+        })
+
+    def stage_report(self, items: list[dict]) -> dict:
+        return self._call('POST', '/admin/stages/report', {'runner': self.runner, 'items': items})
+
+    def stage_sweeps(self) -> dict:
+        return self._call('GET', '/admin/stages/sweeps')

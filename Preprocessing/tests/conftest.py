@@ -100,12 +100,16 @@ class FakeR2:
 
 
 class FakeApi:
-    def __init__(self, items):
+    def __init__(self, items, reruns: dict[tuple[str, str], list[dict]] | None = None):
         self.queue = list(items)
         self.completed: list[dict] = []
         self.failed: list[dict] = []
         self.claims: list[tuple] = []
         self.beats: list[tuple] = []
+        # (kind, stage) -> media the Worker would hand out to re-run that stage on
+        self.reruns = {k: list(v) for k, v in (reruns or {}).items()}
+        self.stage_claims: list[tuple] = []
+        self.reported: list[dict] = []
 
     def heartbeat(self, kinds, busy, stopping=False):
         self.beats.append((kinds, busy, stopping))
@@ -123,6 +127,16 @@ class FakeApi:
 
     def fail(self, items):
         self.failed += items
+
+    def stage_claim(self, stage, version, kind, limit, lease_seconds):
+        self.stage_claims.append((kind, stage, version, bool(self.queue)))
+        queue = self.reruns.get((kind, stage), [])
+        taken, self.reruns[(kind, stage)] = queue[:limit], queue[limit:]
+        return {'items': taken, 'done': not queue}
+
+    def stage_report(self, items):
+        assert len(items) <= 20
+        self.reported += items
 
 
 CFG = Config(worker_url='http://worker', access_client_id='x', access_client_secret='y',

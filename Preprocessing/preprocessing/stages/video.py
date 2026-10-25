@@ -10,6 +10,7 @@ class Probe:
     name = 'probe'
     # v2: also keeps the container's tags (`raw`).
     version = 2
+    source = 'upload'
 
     def run(self, job: Job, data: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -23,6 +24,7 @@ class VideoOriginal:
     file can carry the camera's identity even when it has no location."""
     name = 'original'
     version = 1
+    source = 'upload'
 
     def run(self, job: Job, data: dict[str, Any]) -> dict[str, Any]:
         out = job.work / 'original.mp4'
@@ -38,6 +40,7 @@ class Poster:
     """A still for the grid, through the photo resizer so it gets the same sizes."""
     name = 'poster'
     version = 1
+    source = 'orig'
 
     def run(self, job: Job, data: dict[str, Any]) -> dict[str, Any]:
         frame = job.work / 'poster.jpg'
@@ -53,6 +56,7 @@ class Preview:
     """A browser-playable copy, when the recording's codec will not play everywhere."""
     name = 'preview'
     version = 1
+    source = 'orig'
 
     def run(self, job: Job, data: dict[str, Any]) -> dict[str, Any]:
         if video.web_playable(data['probe']['codec']):

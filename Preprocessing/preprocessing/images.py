@@ -43,8 +43,9 @@ class PhotoResult:
     derivatives: list[Derivative]
 
 
-def process_photo(path: Path, ext: str) -> PhotoResult:
-    width, height, base = upright_base(path, ext)
+def process_photo(path: Path, ext: str, orientation: int | None = None) -> PhotoResult:
+    """`orientation` is for a stripped original, which has lost its EXIF tag."""
+    width, height, base = upright_base(path, ext, orientation)
     if not width or not height:
         raise ValueError('could not read image dimensions')
 
@@ -63,9 +64,10 @@ def process_photo(path: Path, ext: str) -> PhotoResult:
     return PhotoResult(width, height, thumbhash_of(base), derivatives)
 
 
-def upright_base(path: Path, ext: str) -> tuple[int, int, pyvips.Image]:
+def upright_base(path: Path, ext: str, orientation: int | None = None) -> tuple[int, int, pyvips.Image]:
     """Displayed size, and the photo upright in sRGB at no more than the
-    largest width kept, decoded once in memory for every size made from it."""
+    largest width kept, decoded once in memory for every size made from it.
+    HEIC carries its rotation outside EXIF, so it needs no `orientation`."""
     if ext in ('heic', 'heif'):
         # libvips' HEIF loader cannot decode HEVC here; pillow-heif can, and
         # applies the file's rotation as it does.
@@ -81,12 +83,25 @@ def upright_base(path: Path, ext: str) -> tuple[int, int, pyvips.Image]:
         base = full.thumbnail_image(WIDTHS[-1], height=TALL, size='down')
     else:
         head = pyvips.Image.new_from_file(str(path))
-        orientation = head.get('orientation') if head.get_typeof('orientation') else 1
+        stored = head.get('orientation') if head.get_typeof('orientation') else 1
+        # A stripped original no longer says how it was turned; a re-run says instead.
+        turn = orientation if orientation and orientation != stored else None
         # The header describes the stored pixels. Orientations 5-8 mean the
         # camera was turned, so the picture as seen is the other way round.
-        width, height = (head.height, head.width) if orientation >= 5 else (head.width, head.height)
-        # Shrink-on-load, rotated upright, converted to sRGB from any embedded profile.
-        base = pyvips.Image.thumbnail(str(path), WIDTHS[-1], height=TALL, size='down', export_profile='srgb')
+        width, height = (head.height, head.width) if (turn or stored) >= 5 else (head.width, head.height)
+        if turn:
+            # Size the stored pixels so the picture, once turned, is the same
+            # size an upload gives, then turn it as the tag said.
+            box = (TALL, WIDTHS[-1]) if turn >= 5 else (WIDTHS[-1], TALL)
+            # In memory first: turning needs the pixels out of order, and the
+            # decoder reads the file once, top to bottom.
+            base = pyvips.Image.thumbnail(str(path), box[0], height=box[1], size='down',
+                                          export_profile='srgb', no_rotate=True).copy_memory().copy()
+            base.set_type(pyvips.GValue.gint_type, 'orientation', turn)
+            base = base.autorot()
+        else:
+            # Shrink-on-load, rotated upright, converted to sRGB from any embedded profile.
+            base = pyvips.Image.thumbnail(str(path), WIDTHS[-1], height=TALL, size='down', export_profile='srgb')
 
     if base.interpretation not in ('srgb',) or base.format != 'uchar':
         base = base.colourspace('srgb').cast('uchar')

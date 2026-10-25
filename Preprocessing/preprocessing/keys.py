@@ -3,6 +3,10 @@ so every key is immutable and cached forever."""
 
 CACHE_FOREVER = 'public, max-age=31536000, immutable'
 
+# What browsers fetch and cache forever. A re-run that writes under one bumps
+# the media's revision in D1, which goes in its URLs, so the new file is seen.
+SERVED = ('orig/', 'drv/', 'post/', 'prev/')
+
 
 def original(id: str, ext: str) -> str:
     return f'orig/{id}.{ext}'

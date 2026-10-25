@@ -12,6 +12,7 @@ class Exif:
     name = 'exif'
     # v2: also keeps every tag the camera wrote (`raw`).
     version = 2
+    source = 'upload'
 
     def run(self, job: Job, data: dict[str, Any]) -> dict[str, Any]:
         fields, raw = read_exif(job.path, job.photo_tz)
@@ -22,6 +23,7 @@ class Original:
     """The original, with its metadata gone and every pixel kept."""
     name = 'original'
     version = 1
+    source = 'upload'
 
     def run(self, job: Job, data: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -37,9 +39,10 @@ class Derivatives:
     name = 'derivatives'
     # v2: correct width/height for photos the camera marked as rotated.
     version = 2
+    source = 'orig'
 
     def run(self, job: Job, data: dict[str, Any]) -> dict[str, Any]:
-        r = process_photo(job.path, job.ext)
+        r = process_photo(job.path, job.ext, job.orientation)
         for d in r.derivatives:
             job.put(keys.derivative(job.id, d.width), d.body, 'image/avif')
         return {

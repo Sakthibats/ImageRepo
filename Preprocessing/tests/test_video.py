@@ -6,7 +6,7 @@ import subprocess
 import pytest
 from PIL import Image
 
-from preprocessing import video
+from preprocessing import keys, video
 from preprocessing.runner import VIDEO_LEASE
 from preprocessing.stages import STAGES
 from conftest import FakeApi, FakeR2, run, upload, write_photo
@@ -111,3 +111,18 @@ def test_an_unreadable_video_is_given_up_on(tmp_path):
     api = FakeApi([upload(r2, junk, kind='video')])
     run(api, r2)
     assert api.failed[0]['permanent'] is True and 'not a readable video' in api.failed[0]['error']
+
+
+def test_a_poster_reruns_from_the_mp4_original(clips, tmp_path):
+    r2 = FakeR2()
+    api = FakeApi([upload(r2, clips['hevc'], kind='video')])
+    run(api, r2)
+    id = api.completed[0]['id']
+    first = r2.objects.pop(keys.poster(id))
+
+    api = FakeApi([], {('video', 'poster'): [{'id': id, 'kind': 'video', 'ext': 'mp4'}]})
+    run(api, r2)
+    [r] = api.reported
+    assert r['state'] == 'done' and r['rewrote'] is True and r['fields']['thumbhash']
+    with Image.open(io.BytesIO(first)) as a, Image.open(io.BytesIO(r2.objects[keys.poster(id)])) as b:
+        assert a.size == b.size and a.height > a.width, 'still upright: the original kept its rotation'

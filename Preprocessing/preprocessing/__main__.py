@@ -62,6 +62,7 @@ def doctor(cfg, api, r2) -> int:
         h = api.health()
         s = api.summary()
         line('worker', True, f'{h["media"]} items in the library; uploads {s["counts"] or "none waiting"}')
+        line('re-runs', True, rerun_status(cfg, api.stage_sweeps()))
     except Exception as e:
         line('worker', False, str(e))
     status = r2.check()
@@ -75,6 +76,23 @@ def doctor(cfg, api, r2) -> int:
                                            f'HEIC via {", ".join(heif["decoders"]) or "nothing"}')
     print()
     return 0 if ok else 1
+
+
+def rerun_status(cfg, sweeps: dict) -> str:
+    """Each stage that can run again from R2, at this service's version: whether
+    the library has caught up with it."""
+    from .stages import STAGES
+    passes = {(w['stage'], w['version'], w['kind']): w for w in sweeps['sweeps']}
+    parts = []
+    for kind in cfg.kinds:
+        for stage in STAGES.get(kind, []):
+            if stage.source == 'upload':
+                continue
+            w = passes.get((stage.name, stage.version, kind))
+            state = 'not started' if not w else 'up to date' if w['finishedAt'] else 'catching up'
+            failed = f', {w["failed"]} failed' if w and w['failed'] else ''
+            parts.append(f'{kind} {stage.name} v{stage.version} {state}{failed}')
+    return f'{"; ".join(parts)} ({sweeps["today"]} of {sweeps["perDay"]} today)'
 
 
 if __name__ == '__main__':
