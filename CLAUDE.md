@@ -36,7 +36,7 @@ packages/worker/   Hono Worker: /admin (owner + service), /a (owner reads), /s (
 packages/web/      React + Vite, built to dist/, served by the Worker
 Preprocessing/     Python service: claims uploads, runs the stages (photo, video)
 migrations/        every D1 change since schema.sql, numbered, additive
-scripts/deploy.mts `npm run deploy`: checks, migrations, build, deploy, smoke test
+deploy.sh          `./deploy.sh`: runs scripts/deploy.mts (checks, migrations, build, deploy, smoke test)
 ```
 
 ## Commands
@@ -45,8 +45,8 @@ scripts/deploy.mts `npm run deploy`: checks, migrations, build, deploy, smoke te
 npm test                         # everything: typechecks, Worker tests, pytest (~40s)
 npm run -w @imagerepo/worker test   # just the Worker (seconds)
 npm run test:python              # just Preprocessing (needs its .venv and ffmpeg)
-npm run deploy -- --dry-run      # what would change; changes nothing
-npm run deploy                   # migrations, web build, Worker deploy, smoke test
+./deploy.sh --dry-run            # what would change; changes nothing
+./deploy.sh                      # migrations, web build, Worker deploy, smoke test
 (cd Preprocessing && .venv/bin/python -m preprocessing doctor)               # service config check
 ```
 
@@ -102,21 +102,22 @@ npm run deploy                   # migrations, web build, Worker deploy, smoke t
 
 ## Current state (25 October 2026)
 
-- Branch `cli-stages`, with unpushed commits (including the deployed
-  `c002223`), not merged to `main`. Production runs `c002223`; migrations 001–009
-  applied. R2 CORS and the `inbox/` lifecycle rule are set.
+- Work happens on `main`. `cli-stages` is merged into it (PR #1, then locally
+  for the deployed `c002223`) and can be deleted. `main` is ahead of
+  `origin/main`, unpushed. Production runs `c002223`; migrations 001–009
+  applied. Not yet deployed: the quieter offline status in the uploader.
+  R2 CORS and the `inbox/` lifecycle rule are set.
 - The CLI is gone, and so are its routes and D1 tables (`ingest_log`,
   `settings`). Every remaining table is in use.
-- The library was purged and is being re-added through the browser (4 items
-  at last count). The service runs on the laptop (`python -m preprocessing
-  run`); not hosted yet.
+- The library was purged and is being re-added through the browser. The
+  service runs on the laptop (`python -m preprocessing run`); not hosted yet.
 - Verified end to end: photos from laptop and iPhone; the service's online and
   offline status in the uploader. Not yet: real iPhone video (HEVC/HDR,
   whether the picker converts it), the Docker image (never built), hosting.
 
 ## Planned next
 
-0. Merge `cli-stages` into `main` and push; production runs this branch.
+0. Push `main` (production's code is on it only locally), then deploy it.
 1. A backlog mode in the service: claim `/admin/stages/claim` work so a stage
    version bump or a new stage re-processes existing media from `orig/`.
    Stripped JPEGs in `orig/` have lost their EXIF orientation: take it from
