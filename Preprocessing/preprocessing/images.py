@@ -51,7 +51,8 @@ def process_photo(path: Path, ext: str, orientation: int | None = None) -> Photo
 
     derivatives = []
     for w in WIDTHS:
-        # Never upscale: a 900px-wide photo gets no 1024 or 2048 copy.
+        # Never upscale: a 900px-wide photo gets no 1024 or 2048 copy. The
+        # Worker serves the largest one made by the same rule (widthsMade).
         if w > width and w != WIDTHS[0]:
             continue
         img = base.thumbnail_image(w, height=TALL, size='down')

@@ -5,6 +5,7 @@ import {
   IN_SCOPE, type ShareRow,
 } from './share.js';
 import { folderSummaries, listMedia, PAGE_MAX } from './listing.js';
+import { getAsset, parseRange, type AssetRow } from './assets.js';
 
 /**
  * Guest routes. These must be reachable WITHOUT Cloudflare Access, so the
@@ -136,7 +137,7 @@ guest.get('/:token/a/:id/:variant', async (c) => {
   // The tag proves the item was handed out; this proves the link still shares
   // it. Revoking a link or taking a folder out of it applies here at once.
   const row = await c.env.DB.prepare(`
-    SELECT m.id, m.kind, m.ext, m.drv_ext, m.orig_name
+    SELECT m.id, m.kind, m.ext, m.drv_ext, m.width, m.orig_name
     FROM share_links s
     JOIN album_media am ON am.album_id = s.album_id AND am.media_id = ?1
     JOIN media m ON m.id = am.media_id
@@ -145,22 +146,17 @@ guest.get('/:token/a/:id/:variant', async (c) => {
       AND ${IN_SCOPE}
     LIMIT 1
   `).bind(id, session.s, session.a, Math.floor(Date.now() / 1000))
-    .first<{ id: string; kind: string; ext: string; drv_ext: string; orig_name: string | null }>();
+    .first<AssetRow & { orig_name: string | null }>();
   if (!row) return c.json({ error: 'not authorised for this item' }, 403, noStore);
-
-  const key = variant === 'orig'
-    ? `orig/${row.id}.${row.kind === 'video' ? 'mp4' : row.ext}`
-    : variant === 'poster' ? `post/${row.id}.jpg`
-    : variant === 'preview' ? `prev/${row.id}.mp4`
-    : `drv/${row.id}/${variant}.${row.drv_ext || 'avif'}`;
 
   const rangeHeader = c.req.header('range');
   const range = rangeHeader ? parseRange(rangeHeader) : undefined;
-  const obj = range ? await c.env.BUCKET.get(key, { range }) : await c.env.BUCKET.get(key);
-  if (!obj || !('body' in obj)) return c.json({ error: 'object missing' }, 404, noStore);
+  const found = await getAsset(c.env.BUCKET, row, variant, range);
+  if (!found) return c.json({ error: 'object missing' }, 404, noStore);
+  const { obj, type } = found;
 
   const headers = new Headers();
-  headers.set('content-type', contentTypeFor(variant, row.kind, row.drv_ext));
+  headers.set('content-type', type);
   // Cacheable, but only within the tag's bucket window.
   headers.set('cache-control', 'public, max-age=3600');
   headers.set('etag', obj.httpEtag);
@@ -183,23 +179,6 @@ guest.get('/:token/a/:id/:variant', async (c) => {
   headers.set('content-length', String(obj.size));
   return new Response(obj.body, { status: 200, headers });
 });
-
-function contentTypeFor(variant: string, kind: string, drvExt = 'avif'): string {
-  if (variant === 'orig') return kind === 'video' ? 'video/mp4' : 'image/jpeg';
-  if (variant === 'poster') return 'image/jpeg';
-  if (variant === 'preview') return 'video/mp4';
-  return drvExt === 'avif' ? 'image/avif' : `image/${drvExt}`;
-}
-
-function parseRange(header: string): R2Range | undefined {
-  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
-  if (!m) return undefined;
-  const [, a, b] = m;
-  if (a === '' && b === '') return undefined;
-  if (a === '') return { suffix: Number(b) };
-  if (b === '') return { offset: Number(a) };
-  return { offset: Number(a), length: Number(b) - Number(a) + 1 };
-}
 
 /**
  * Serves the app shell for a share link. run_worker_first routes /s/* here, so

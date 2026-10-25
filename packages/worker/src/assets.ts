@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Env, Viewer } from './types.js';
 import { resolveViewer } from './access.js';
-import type { AlbumDetail } from '@imagerepo/shared';
+import { widthsMade, type AlbumDetail } from '@imagerepo/shared';
 import { slugTag, tagReads } from './tags.js';
 import { albumSummaries, folderSummaries, listMedia, PAGE_MAX, type Scope } from './listing.js';
 
@@ -76,22 +76,18 @@ assets.get('/:id/:variant', async (c) => {
   if (!VARIANTS.has(variant)) return c.json({ error: 'bad variant' }, 400);
 
   const row = await c.env.DB
-    .prepare('SELECT id, kind, ext, drv_ext, orig_name FROM media WHERE id = ?1')
+    .prepare('SELECT id, kind, ext, drv_ext, width, orig_name FROM media WHERE id = ?1')
     .bind(id)
-    .first<{ id: string; kind: string; ext: string; drv_ext: string; orig_name: string | null }>();
+    .first<AssetRow & { orig_name: string | null }>();
   if (!row) return c.json({ error: 'not found' }, 404);
-
-  const { key, type } = resolveKey(row, variant);
 
   // R2 populates obj.range even on a full GET, so the presence of a range on
   // the object is not evidence the client asked for one. Track the request.
   const rangeHeader = c.req.header('range');
   const range = rangeHeader ? parseRange(rangeHeader) : undefined;
-  const obj = range
-    ? await c.env.BUCKET.get(key, { range })
-    : await c.env.BUCKET.get(key);
-
-  if (!obj || !('body' in obj)) return c.json({ error: 'object missing' }, 404);
+  const found = await getAsset(c.env.BUCKET, row, variant, range);
+  if (!found) return c.json({ error: 'object missing' }, 404);
+  const { obj, type } = found;
 
   const headers = new Headers();
   headers.set('content-type', type);
@@ -129,7 +125,24 @@ function downloadName(row: { id: string; kind: string; ext: string; orig_name: s
   return safe || fallback;
 }
 
-function resolveKey(row: { id: string; kind: string; ext: string; drv_ext?: string }, variant: string) {
+/** What serving a media item's files needs from its row. */
+export interface AssetRow { id: string; kind: string; ext: string; drv_ext: string | null; width: number | null }
+
+/**
+ * One variant of a media item from R2, and its content type: for the
+ * owner's route and guests' alike. A size is never upscaled (widthsMade), so
+ * a photo narrower than the size asked for is served the largest it has. A
+ * video whose codec plays everywhere has no preview: its MP4 original is one.
+ */
+export async function getAsset(bucket: R2Bucket, row: AssetRow, variant: string, range?: R2Range) {
+  const { key, type } = resolveKey(row, variant);
+  const get = (k: string) => (range ? bucket.get(k, { range }) : bucket.get(k));
+  let obj = await get(key);
+  if (!obj && variant === 'preview') obj = await get(`orig/${row.id}.mp4`);
+  return obj && 'body' in obj ? { obj, type } : null;
+}
+
+function resolveKey(row: AssetRow, variant: string) {
   if (variant === 'orig') {
     const ext = row.kind === 'video' ? 'mp4' : row.ext;
     return { key: `orig/${row.id}.${ext}`, type: row.kind === 'video' ? 'video/mp4' : 'image/jpeg' };
@@ -139,11 +152,13 @@ function resolveKey(row: { id: string; kind: string; ext: string; drv_ext?: stri
   // Browser uploads encode with canvas, which cannot reliably emit AVIF, so
   // the format is recorded per media rather than assumed.
   const dx = row.drv_ext || 'avif';
-  return { key: `drv/${row.id}/${variant}.${dx}`, type: dx === 'avif' ? 'image/avif' : `image/${dx}` };
+  const asked = Number(variant);
+  const width = row.width ? Math.max(...widthsMade(row.width).filter((w) => w <= asked)) : asked;
+  return { key: `drv/${row.id}/${width}.${dx}`, type: dx === 'avif' ? 'image/avif' : `image/${dx}` };
 }
 
 /** "bytes=100-200" -> R2 range. Open-ended and suffix forms both appear in the wild. */
-function parseRange(header: string): R2Range | undefined {
+export function parseRange(header: string): R2Range | undefined {
   const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
   if (!m) return undefined;
   const [, a, b] = m;

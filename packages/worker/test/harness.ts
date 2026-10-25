@@ -290,7 +290,7 @@ export function makeWorld(o: { s3?: boolean } = {}) {
     const text = await res.text();
     let json: any = null;
     try { json = JSON.parse(text); } catch { /* not JSON */ }
-    return { status: res.status, json, headers: res.headers };
+    return { status: res.status, json, text, headers: res.headers };
   }
 
   return { env, sqlite, bucket, call };

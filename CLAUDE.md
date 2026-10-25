@@ -126,6 +126,9 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 - vips headers report stored dimensions; EXIF orientations 5–8 mean displayed
   width and height are swapped. Stripped JPEG and PNG originals have no
   orientation at all: a re-run's claim carries it from `raw_meta`.
+- Sizes are never upscaled (`widthsMade` in shared): an 1800px photo has no
+  2048 copy. `getAsset` (assets.ts, owner and guest routes) serves the
+  largest one made, and a video with no preview (H.264) plays its original.
 - The laptop CLI (`packages/ingest`) was removed on 25 Oct 2026; git history has
   it. Its outputs are the reference for the service's parity tests.
 
@@ -144,8 +147,10 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
   dropped `albums.manifest_ver` and `album_media.position`.
 - Built, not yet pushed or deployed: re-running stages (migration 013:
   `stage_sweeps`, `media.rev`; `/admin/stages/claim|report|sweeps`; the
-  service's re-run loop; `?r=` in asset URLs). Deploy the Worker before
-  starting the new service: the old Worker's claim route has another shape.
+  service's re-run loop; `?r=` in asset URLs), and the fix for previews of
+  photos under 2048px wide (production 404s on their 2048 copy). Deploy the
+  Worker before starting the new service: the old Worker's claim route has
+  another shape.
 - The library holds 10 items (9 photos, 1 video) in one album. D1 use is small:
   about 40k rows read and 1.5k written a day, mostly the service polling.
 - The service runs on the laptop (`python -m preprocessing run`); not hosted.

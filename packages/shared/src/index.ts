@@ -4,6 +4,14 @@
 export const PHOTO_WIDTHS = [320, 1024, 2048] as const;
 export type PhotoWidth = (typeof PHOTO_WIDTHS)[number];
 
+/**
+ * The sizes made for a photo, or a video's poster, `width` pixels wide as
+ * displayed. Never upscaled, so only the sizes it covers, but always the
+ * smallest, which is the grid thumbnail. Preprocessing/images.py makes these.
+ */
+export const widthsMade = (width: number): PhotoWidth[] =>
+  PHOTO_WIDTHS.filter((w, i) => i === 0 || w <= width);
+
 /** Poster frames reuse the photo pipeline, so the same widths apply. */
 export const VIDEO_PREVIEW_HEIGHT = 720;
 
