@@ -158,13 +158,13 @@ function ServiceStatus({ runners, waiting }: { runners: Runner[] | null; waiting
       </div>
     );
   }
+  // Not an error: uploads are kept until it runs. Details stay in the tooltip.
   const last = runners[0];
+  const detail = `${last ? `Last seen on ${last.name} ${ago(last.lastSeen)}. ` : ''}Start it with: python -m preprocessing run`;
   return (
-    <div className="service off small">
+    <div className="service off small" title={detail}>
       <span className="dot" />
-      Processing service is not running{last ? ` (last seen on ${last.name} ${ago(last.lastSeen)})` : ''}.{' '}
-      {waiting ? 'These will be processed once it starts' : 'Uploads will wait until it starts'}:{' '}
-      <code>python -m preprocessing run</code>
+      Processing offline · {waiting ? 'these will be processed when it’s back' : 'uploads will wait'}
     </div>
   );
 }
