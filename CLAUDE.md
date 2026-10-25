@@ -134,10 +134,13 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 
 ## Current state (26 October 2026)
 
-- Work happens on `main`. Pushed and deployed through `38e1ebd` (25 Oct);
-  migrations 001–012 applied. `cli-stages` is merged and can be deleted
-  (locally and on origin).
-- Production has live reads (`listMedia`, no baking), the 7-day inbox fixes
+- Work happens on `main`. Deployed through `cc6758e` (25 Oct); migrations
+  001–013 applied. `cli-stages` is merged and can be deleted (locally and on
+  origin).
+- Production has re-running stages (the service started its passes for
+  derivatives v2, poster v1 and preview v1, and each finished at once with
+  nothing behind), `?r=` in asset URLs, previews served from the largest copy
+  a photo has, live reads (`listMedia`, no baking), the 7-day inbox fixes
   (a gone upload fails at once, `/start` re-sends it, retries back off
   1m/5m/30m/2h), the uploader queueing its first files as soon as they are
   hashed, and the backlog line saying "retrying in N min" for a file backing
@@ -145,14 +148,8 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
   rule are set.
 - Baking is fully gone: `man/` is deleted from R2 and `PREFIXES`, and 012
   dropped `albums.manifest_ver` and `album_media.position`.
-- Built, not yet pushed or deployed: re-running stages (migration 013:
-  `stage_sweeps`, `media.rev`; `/admin/stages/claim|report|sweeps`; the
-  service's re-run loop; `?r=` in asset URLs), and the fix for previews of
-  photos under 2048px wide (production 404s on their 2048 copy). Deploy the
-  Worker before starting the new service: the old Worker's claim route has
-  another shape.
-- The library holds 10 items (9 photos, 1 video) in one album. D1 use is small:
-  about 40k rows read and 1.5k written a day, mostly the service polling.
+- The library holds 13 items (12 photos, 1 video) in one album. D1 use is
+  small: about 50k rows read and 2k written a day, mostly the service polling.
 - The service runs on the laptop (`python -m preprocessing run`); not hosted.
   The Docker image has never been built.
 - Verified end to end: photos from laptop and iPhone; the service's online and
