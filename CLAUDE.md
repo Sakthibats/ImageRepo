@@ -107,9 +107,9 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
   `stage_sweeps`, at most 5,000 a day. An `upload` stage (exif, original,
   probe) read what only the deleted upload had: its new version applies to
   new uploads only.
-- `.env*` files are secrets and blocked from reading and writing, the
-  templates (`.env.example`) included since their rename: the owner keeps
-  them in step with the code. Use `doctor` commands to check configuration.
+- `.env*` files are secrets and blocked from reading and writing; templates
+  are named `env.example` so the block does not cover them, and are kept in
+  step with the code. Use `doctor` commands to check configuration.
 - Commit in steps; never push or deploy unless asked.
 
 ## Gotchas

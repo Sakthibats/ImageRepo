@@ -184,7 +184,7 @@ Then the service:
 
 ```bash
 cd Preprocessing
-cp .env.example .env                             # the service token, the R2 key pair
+cp env.example .env                              # the service token, the R2 key pair
 python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/python -m preprocessing doctor
 .venv/bin/python -m preprocessing run            # or: docker compose up --build -d

@@ -2,7 +2,7 @@ services:
   preprocessing:
     build: .
     image: imagerepo-preprocessing
-    # Settings, secrets included, from this machine's own .env (see .env.example).
+    # Settings, secrets included, from this machine's own .env (see env.example).
     # Give each machine its own RUNNER_NAME, so the app says which one is running.
     env_file: .env
     restart: unless-stopped

@@ -26,7 +26,7 @@ a long transcode. On a Mac the HEVC preview uses VideoToolbox.
 ## Run it
 
 ```bash
-cp .env.example .env            # fill in the two secrets
+cp env.example .env             # fill in the two secrets
 python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/python -m preprocessing doctor    # checks settings, Worker, R2
 .venv/bin/python -m preprocessing run       # Ctrl-C finishes the files in hand

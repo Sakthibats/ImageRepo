@@ -51,7 +51,7 @@ def load() -> Config:
     load_dotenv(ROOT / '.env')
     missing = [k for k in REQUIRED if not os.environ.get(k)]
     if missing:
-        raise ConfigError(f'missing settings: {", ".join(missing)} (see .env.example)')
+        raise ConfigError(f'missing settings: {", ".join(missing)} (see env.example)')
     env = os.environ
     kinds = tuple(k.strip() for k in env.get('KINDS', 'photo,video').split(',') if k.strip())
     if not kinds or set(kinds) - {'photo', 'video'}:

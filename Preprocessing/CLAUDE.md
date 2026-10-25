@@ -30,8 +30,7 @@ docker compose up --build -d # as a service; give its .env its own RUNNER_NAME
 ## Things to know
 
 - Settings come from `.env` (gitignored, unreadable to Claude); template is
-  `.env.example`, which the same block covers: the owner keeps it in step
-  with `config.py`. `KINDS` picks photo/video, `PHOTO_TZ` is for EXIF times with
+  `env.example`, named so the `.env*` block does not cover it. `KINDS` picks photo/video, `PHOTO_TZ` is for EXIF times with
   no offset (the owner is in Asia/Singapore), `CONCURRENCY` defaults to cores.
 - libvips (`pyvips[binary]`) and libheif (`pillow-heif`) are wheels; nothing to
   install but ffmpeg. HEIC is decoded by pillow-heif, not vips (no HEVC there).
