@@ -67,7 +67,7 @@ export async function listMedia(
 
   // Named column by column, never m.*, so location cannot reach a guest even by accident.
   const { results } = await db.prepare(`
-    SELECT m.id, m.kind, m.width, m.height, m.taken_at, m.thumbhash, m.duration_ms, m.caption
+    SELECT m.id, m.kind, m.width, m.height, m.taken_at, m.thumbhash, m.duration_ms, m.caption, m.rev
            ${shape === 'owner' ? ', m.lat, m.lon, m.place' : ''}${folder}, ${ts} AS ts
     FROM ${from}
     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
@@ -84,7 +84,7 @@ export async function listMedia(
 
 interface Row {
   id: string; kind: 'photo' | 'video'; width: number | null; height: number | null;
-  taken_at: number | null; thumbhash: string | null; duration_ms: number | null; caption: string | null;
+  taken_at: number | null; thumbhash: string | null; duration_ms: number | null; caption: string | null; rev: number;
   folder_id?: string | null; lat?: number | null; lon?: number | null; place?: string | null; ts: number;
 }
 
@@ -95,6 +95,7 @@ function toItem(r: Row, shape: Shape): MediaItem | OwnerMediaItem {
   if (r.duration_ms) item.d = r.duration_ms;
   if (r.caption) item.c = r.caption;
   if (r.folder_id) item.f = r.folder_id;
+  if (r.rev) item.r = r.rev;
   if (shape === 'owner') {
     if (r.lat != null) item.lat = r.lat;
     if (r.lon != null) item.lon = r.lon;
@@ -113,16 +114,20 @@ const earliest = (range: string) => `COALESCE(
     WHERE ${range} AND xm.kind = 'photo' ORDER BY x.sort_ts, x.media_id LIMIT 1),
   (SELECT x.media_id FROM album_media x WHERE ${range} ORDER BY x.sort_ts, x.media_id LIMIT 1))`;
 
+/** Adds the cover's revision, for its URL, to each row of `sql`, whose cover is `cover`. */
+const withCoverRev = (sql: string, cover = 'q.cover') =>
+  `SELECT q.*, (SELECT rev FROM media WHERE id = ${cover}) AS coverRev FROM (${sql}) q`;
+
 /** Albums with their counts, covers and newest dates, or just one: a few rows per album. */
 export async function albumSummaries(db: D1Database, only?: string): Promise<AlbumSummary[]> {
-  const sql = `
+  const sql = withCoverRev(`
     SELECT a.id, a.title, a.item_count AS n,
            COALESCE(a.cover_id, ${earliest('x.album_id = a.id')}) AS cover,
            (SELECT MAX(sort_ts) FROM album_media WHERE album_id = a.id) AS newest
-    FROM albums a ${only ? 'WHERE a.id = ?1' : ''} ORDER BY a.title`;
-  const stmt = db.prepare(sql);
-  const { results } = await (only ? stmt.bind(only) : stmt).all<AlbumSummary>();
-  return results;
+    FROM albums a ${only ? 'WHERE a.id = ?1' : ''}`);
+  const stmt = db.prepare(`${sql} ORDER BY q.title`);
+  const { results } = await (only ? stmt.bind(only) : stmt).all<AlbumSummary & { coverRev: number | null }>();
+  return results.map(({ coverRev, ...a }) => ({ ...a, ...(coverRev ? { coverRev } : {}) }));
 }
 
 /**
@@ -138,20 +143,22 @@ export async function folderSummaries(
   const pinned = owner ? 'f.cover_id' : `CASE WHEN EXISTS (
       SELECT 1 FROM album_media am WHERE am.media_id = f.cover_id AND am.album_id = s.album_id AND ${IN_SCOPE}
     ) THEN f.cover_id END`;
-  const { results } = await db.prepare(`
+  const { results } = await db.prepare(withCoverRev(`
     SELECT f.id, f.title, f.item_count AS n, ${pinned} AS pinned, ${earliest(range)} AS first,
            (SELECT MAX(x.sort_ts) FROM album_media x WHERE ${range}) AS newest
     ${owner
       ? 'FROM folders f WHERE f.album_id = ?1'
       : `FROM share_links s JOIN folders f ON f.album_id = s.album_id
          WHERE s.token_hash = ?1 AND ${FOLDER_IN_SCOPE} AND f.item_count > 0`}
-  `).bind(owner ? from.album : from.share)
-    .all<{ id: string; title: string; n: number; pinned: string | null; first: string | null; newest: number | null }>();
+  `, 'COALESCE(q.pinned, q.first)')).bind(owner ? from.album : from.share).all<{
+    id: string; title: string; n: number; pinned: string | null; first: string | null;
+    coverRev: number | null; newest: number | null;
+  }>();
 
   return results
     .map((f): FolderSummary => ({
-      id: f.id, title: f.title, n: f.n,
-      cover: f.pinned ?? f.first, ...(f.pinned ? { coverPinned: true } : {}),
+      id: f.id, title: f.title, n: f.n, cover: f.pinned ?? f.first,
+      ...(f.coverRev ? { coverRev: f.coverRev } : {}), ...(f.pinned ? { coverPinned: true } : {}),
       newest: f.newest,
     }))
     // An empty folder is usually one just made to be filled, so it leads.

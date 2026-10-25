@@ -67,7 +67,12 @@ export async function loadAll<T extends MediaItem>(
   return items;
 }
 
-export const assetUrl = (id: string, variant: string) => `/a/${id}/${variant}`;
+/**
+ * Where one size of an item is. Its revision is in the URL: the response is
+ * cached as immutable, so a re-run's new files need a URL of their own.
+ */
+export const assetUrl = (item: { id: string; r?: number }, variant: string) =>
+  `/a/${item.id}/${variant}${item.r ? `?r=${item.r}` : ''}`;
 
 /** Picks the smallest derivative that still covers the rendered size. */
 export function pickWidth(displayWidth: number): 320 | 1024 | 2048 {

@@ -104,7 +104,7 @@ export function TagsView({
           <PhotoGrid
             items={results}
             onOpen={(i) => onOpen(results, i)}
-            urlFor={(it, v) => assetUrl(it.id, v)}
+            urlFor={assetUrl}
             selection={selection}
             onToggle={onToggle}
           />

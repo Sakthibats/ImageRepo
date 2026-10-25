@@ -83,7 +83,7 @@ export function TimelineView({
             <PhotoGrid
               items={g.items}
               onOpen={(i) => onOpen(items, base + i)}
-              urlFor={(it, v) => assetUrl(it.id, v)}
+              urlFor={assetUrl}
               selection={selection}
               onToggle={(id, i, shift) => onToggle(id, base + i, shift)}
             />

@@ -321,7 +321,7 @@ function OwnerApp() {
                   <button className="album-hit" onClick={() => { setOpen(a); window.scrollTo(0, 0); }}>
                     <div className="album-cover">
                       {a.cover
-                        ? <img src={assetUrl(a.cover, '320')} alt="" loading="lazy" />
+                        ? <img src={assetUrl({ id: a.cover, r: a.coverRev }, '320')} alt="" loading="lazy" />
                         : <div className="album-blank" />}
                     </div>
                     <div className="album-name">{a.title}</div>
@@ -353,7 +353,7 @@ function OwnerApp() {
             index={globalLb.index}
             onClose={() => setGlobalLb(null)}
             onIndex={(i) => setGlobalLb({ ...globalLb, index: i })}
-            urlFor={(it, v) => assetUrl(it.id, v)}
+            urlFor={assetUrl}
           />
         )}
 
@@ -407,7 +407,8 @@ function OwnerApp() {
         <FolderStrip
           folders={folders} total={detail.n} loose={detail.loose}
           view={activeView} onView={changeView}
-          coverUrl={(id) => assetUrl(id, '320')} allCover={open.cover}
+          coverUrl={(c) => assetUrl(c, '320')}
+          allCover={open.cover ? { id: open.cover, r: open.coverRev } : null}
         />
       )}
 
@@ -454,7 +455,7 @@ function OwnerApp() {
           </div>
         )
         : <PhotoGrid items={shown!} onOpen={setLightbox}
-                     urlFor={(it, v) => assetUrl(it.id, v)}
+                     urlFor={assetUrl}
                      selection={selection} onToggle={toggle} />}
 
       {shown && lightbox !== null && (
@@ -463,7 +464,7 @@ function OwnerApp() {
           index={lightbox}
           onClose={() => setLightbox(null)}
           onIndex={setLightbox}
-          urlFor={(it, v) => assetUrl(it.id, v)}
+          urlFor={assetUrl}
         />
       )}
 

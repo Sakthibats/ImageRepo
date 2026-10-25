@@ -47,6 +47,6 @@ export async function fetchGuestPage(
   return res.json() as Promise<MediaPage<GuestItem>>;
 }
 
-/** Asset URLs carry the per-item tag the server issued with the page. */
-export const guestAssetUrl = (token: string, item: { id: string; t2: string }, variant: string) =>
-  `/s/${token}/a/${item.id}/${variant}?t=${encodeURIComponent(item.t2)}`;
+/** Asset URLs carry the per-item tag the server issued with the page, and the item's revision. */
+export const guestAssetUrl = (token: string, item: { id: string; t2: string; r?: number }, variant: string) =>
+  `/s/${token}/a/${item.id}/${variant}?t=${encodeURIComponent(item.t2)}${item.r ? `&r=${item.r}` : ''}`;

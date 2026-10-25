@@ -1,5 +1,8 @@
 import type { FolderSummary } from '@imagerepo/shared';
 
+/** A cover photo: its id, and its revision for the URL. */
+export type Cover = { id: string; r?: number };
+
 /** What an album view is showing: everything, the loose photos, or one folder's id. */
 export type FolderView = 'all' | 'loose' | string;
 
@@ -23,9 +26,9 @@ export function FolderStrip({
   loose: number;
   view: FolderView;
   onView: (view: FolderView) => void;
-  /** A thumbnail URL for a media id, or null if this viewer cannot load it. */
-  coverUrl: (id: string) => string | null;
-  allCover: string | null;
+  /** A thumbnail URL for a cover, or null if this viewer cannot load it. */
+  coverUrl: (cover: Cover) => string | null;
+  allCover: Cover | null;
 }) {
   if (!folders.length) return null;
   return (
@@ -38,7 +41,7 @@ export function FolderStrip({
       )}
       {folders.map((f) => (
         <Card key={f.id} title={f.title} n={f.n} on={view === f.id} onClick={() => onView(f.id)}
-              img={f.cover ? coverUrl(f.cover) : null} icon="▢" />
+              img={f.cover ? coverUrl({ id: f.cover, r: f.coverRev }) : null} icon="▢" />
       ))}
     </nav>
   );

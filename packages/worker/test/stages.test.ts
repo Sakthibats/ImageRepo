@@ -91,6 +91,24 @@ const d3 = sweeps.sweeps.find((s: any) => s.stage === 'derivatives' && s.version
 check('the service can see where each pass stands', d3.finishedAt > 0 && d3.failed === 1 &&
   sweeps.today === RERUNS_PER_DAY && sweeps.perDay === RERUNS_PER_DAY, JSON.stringify(sweeps));
 
+// hex(4)'s served files were rewritten: every way to its URLs says so.
+const page = (await w.call('GET', '/a/media?album=trip')).json.items;
+check('the owner’s pages carry a rewritten photo’s revision, and only its',
+  page.find((i: any) => i.id === hex(4)).r === 1 && page.filter((i: any) => i.r).length === 1);
+await w.call('PATCH', '/admin/albums/trip', { body: { coverId: hex(4) } });
+const folder = (await w.call('POST', '/admin/albums/trip/folders', { body: { title: 'Turned' } })).json.id;
+await w.call('POST', '/admin/albums/trip/folder-items', { body: { mediaIds: [hex(4)], folderId: folder } });
+const albumCover = (await w.call('GET', '/a/albums')).json.albums[0];
+const detail = (await w.call('GET', '/a/albums/trip')).json;
+check('and so do album and folder covers', albumCover.coverRev === 1 &&
+  detail.folders.find((f: any) => f.id === folder).coverRev === 1, JSON.stringify(albumCover));
+const link = (await w.call('POST', '/admin/shares', { body: { albumId: 'trip' } })).json;
+const session = await w.call('POST', `/s/${link.token}/session`, { auth: 'none' });
+const cookie = (session.headers.get('set-cookie') ?? '').split(';')[0];
+const guestPage = (await w.call('GET', `/s/${link.token}/media`, { auth: 'none', cookie })).json.items;
+check('and a guest’s', guestPage.find((i: any) => i.id === hex(4)).r === 1 &&
+  session.json.folders.find((f: any) => f.id === folder).coverRev === 1);
+
 check('a claim names its kind', (await claim({ stage: 'derivatives', version: 3 })).status === 400);
 check('and a real version', (await claim({ stage: 'derivatives', version: 0, kind: 'photo' })).status === 400);
 check('guests cannot claim', (await w.call('POST', '/admin/stages/claim', { auth: 'none', body: {} })).status === 401);

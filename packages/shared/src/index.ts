@@ -87,6 +87,7 @@ export interface MediaItem {
   d?: number;                 // durationMs, video only
   c?: string;                 // caption
   f?: string;                 // folder id; absent = loose in the album
+  r?: number;                 // revision of its served files, in their URLs; absent = 0
   // NOTE: no lat/lon/place here. The owner's listings add them via OwnerMediaItem.
 }
 
@@ -99,6 +100,8 @@ export interface FolderSummary {
   cover: string | null;
   /** True when the owner picked the cover rather than it being worked out. */
   coverPinned?: boolean;
+  /** The cover's revision, for its URL; absent = 0. */
+  coverRev?: number;
   /** Guests only: the tag that lets them load the cover, which may not be on a page they have yet. */
   coverTag?: string;
   newest: number | null;      // sort date of the most recent item, for ordering
@@ -124,6 +127,8 @@ export interface AlbumSummary {
   n: number;
   /** The chosen cover, or the album's earliest photo. */
   cover: string | null;
+  /** The cover's revision, for its URL; absent = 0. */
+  coverRev?: number;
   newest: number | null;      // sort date of the most recent item, for ordering
 }
 

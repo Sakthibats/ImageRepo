@@ -4,7 +4,7 @@ import { openShareSession, fetchGuestPage, guestAssetUrl, type GuestAlbum, type 
 import { loadAll } from '../api.ts';
 import { PhotoGrid } from './PhotoGrid.tsx';
 import { Lightbox } from './Lightbox.tsx';
-import { FolderStrip, itemsIn, type FolderView } from './FolderStrip.tsx';
+import { FolderStrip, itemsIn, type Cover, type FolderView } from './FolderStrip.tsx';
 import { loadSort, saveSort, type SortOrder } from '../tags.ts';
 
 /** The whole guest experience. No login, no album switching, no admin. */
@@ -91,9 +91,9 @@ export function ShareView({ token }: { token: string }) {
   const urlFor = (item: any, variant: string) =>
     guestAssetUrl(token, item as GuestItem, variant);
   // Covers are ids; a guest can only load an item it holds a tag for.
-  const coverUrl = (id: string) => {
-    const t2 = tags.get(id);
-    return t2 ? guestAssetUrl(token, { id, t2 }, '320') : null;
+  const coverUrl = (cover: Cover) => {
+    const t2 = tags.get(cover.id);
+    return t2 ? guestAssetUrl(token, { ...cover, t2 }, '320') : null;
   };
   const firstPhoto = items.find((i) => i.k === 'photo') ?? items[0];
 
@@ -119,7 +119,7 @@ export function ShareView({ token }: { token: string }) {
       <FolderStrip
         folders={album.folders} total={album.count} loose={album.loose}
         view={view} onView={(v) => { setView(v); setLightbox(null); }}
-        coverUrl={coverUrl} allCover={firstPhoto?.id ?? null}
+        coverUrl={coverUrl} allCover={firstPhoto ?? null}
       />
 
       <PhotoGrid items={shown} onOpen={setLightbox} urlFor={urlFor} />
