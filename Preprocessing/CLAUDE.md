@@ -30,12 +30,15 @@ docker compose up --build -d # as a service; give its .env its own RUNNER_NAME
 ## Things to know
 
 - Settings come from `.env` (gitignored, unreadable to Claude); template is
-  `env.example`. `KINDS` picks photo/video, `PHOTO_TZ` is for EXIF times with
+  `.env.example`, which the same block covers: the owner keeps it in step
+  with `config.py`. `KINDS` picks photo/video, `PHOTO_TZ` is for EXIF times with
   no offset (the owner is in Asia/Singapore), `CONCURRENCY` defaults to cores.
 - libvips (`pyvips[binary]`) and libheif (`pillow-heif`) are wheels; nothing to
   install but ffmpeg. HEIC is decoded by pillow-heif, not vips (no HEVC there).
 - The image is Debian trixie (ffmpeg 7.1): bookworm's 5.1 lacks options the
-  video tests use. Built and tested on arm64 and amd64. On 2 vCPUs (M-series,
+  video tests use. Built and tested on arm64 and amd64; for an x86 server
+  from the Mac, `docker buildx build --platform linux/amd64 --load .`. Each
+  machine's `.env` needs its own `RUNNER_NAME`. On 2 vCPUs (M-series,
   in Docker): ~0.55s per 12MP photo two at a time, ~6,500 an hour; an HEVC
   preview takes 0.5–0.9s per second of video (libx264, no VideoToolbox).
 - vips runs one thread per image (`concurrency_set(1)`); parallelism is the

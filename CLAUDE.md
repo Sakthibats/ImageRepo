@@ -107,8 +107,9 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
   `stage_sweeps`, at most 5,000 a day. An `upload` stage (exif, original,
   probe) read what only the deleted upload had: its new version applies to
   new uploads only.
-- `.env*` files are secrets and blocked from reading and writing; templates
-  are named `env.example`. Use `doctor` commands to check configuration.
+- `.env*` files are secrets and blocked from reading and writing, the
+  templates (`.env.example`) included since their rename: the owner keeps
+  them in step with the code. Use `doctor` commands to check configuration.
 - Commit in steps; never push or deploy unless asked.
 
 ## Gotchas
@@ -132,11 +133,36 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 - The laptop CLI (`packages/ingest`) was removed on 25 Oct 2026; git history has
   it. Its outputs are the reference for the service's parity tests.
 
+## Going forward
+
+- **Free-plan budgets set the pace, not the server.** D1 allows 100k rows
+  written a day: each upload writes rows (estimated ~15–20, measure in the
+  ~1,000-file run), each running service ~4,300 a day in heartbeats, and
+  re-runs are capped at 5,000 items a day. A bigger box finishes the day's
+  quota sooner; it does not finish the library sooner.
+- **R2 is the one bill.** 10 GB is free; the full library is ~300–500 GB
+  (~$0.015/GB-month). Class A writes (1M a month free) are ~5 per photo
+  uploaded (the upload, its original, three sizes) and ~3 per re-run.
+- **One `RUNNER_NAME` per machine.** Two services can run at once (claims
+  are leases), but the backlog line names runners, and a stopped one is
+  shown as offline. Stop the laptop's when a server takes over.
+- **Never poll `doctor` or `/admin/health`** (e.g. as a container
+  healthcheck): health counts every media row, all 100k of them each time.
+  The service's heartbeat already tells the app whether it is up.
+- **A version bump costs time.** Re-running a stage over 100k photos takes
+  ~20 days at the cap. Bump only for a real change; new uploads get it at once.
+- **Video is the untested part:** real iPhone HEVC/HDR (no tone-mapping yet),
+  and HEVC previews in Docker use libx264 at 0.5–0.9s per second of video on
+  2 vCPUs.
+- **Check before relying on any limit or price**: Hetzner raised prices and
+  Oracle halved its free tier in June 2026.
+
 ## Current state (26 October 2026)
 
-- Work happens on `main`. Deployed through `cc6758e` (25 Oct); migrations
-  001–013 applied. `cli-stages` is merged and can be deleted (locally and on
-  origin).
+- Work happens on `main`, pushed through `5646cb9`. The Worker is deployed
+  through `cc6758e` (25 Oct; later commits are the service, its image and
+  docs); migrations 001–013 applied. `cli-stages` is merged and can be
+  deleted (locally and on origin).
 - Production has re-running stages (the service started its passes for
   derivatives v2, poster v1 and preview v1, and each finished at once with
   nothing behind), `?r=` in asset URLs, previews served from the largest copy
@@ -168,11 +194,14 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
    decide R2 storage: 10 GB is free, 100k photos is roughly 300–500 GB
    (about $5–7 a month). Only if the numbers say so: album pages on scroll
    (web only, same API), version-keyed browser caching, exact upload counts.
-2. Host the service for a weeks-long upload: an always-on box running the
-   Docker image. On the free plan, D1's writes cap the pace, not CPU, so a
-   small box is enough (2 vCPUs process a day's quota in an hour or two).
-   Cloudflare Containers needs the paid Workers plan and bills an always-on
-   poller around the clock.
+2. Host the service for a weeks-long upload: the Docker image on an
+   always-on machine. Recommended: a machine the owner already has that never
+   sleeps (free), else Hetzner CAX11 (2 ARM vCPU, 4 GB, ~€6.50/mo; CAX21 at
+   ~€11 if video-heavy) with `CONCURRENCY=2`. Not Oracle's free ARM tier
+   (halved to 2 OCPU/12 GB in June 2026, and it reclaims instances idle for a
+   week, which this service mostly is, unless the account is pay-as-you-go),
+   nor Cloudflare Containers (paid plan, and an always-on poller is billed
+   around the clock, ~$30/mo). Prices as of Oct 2026; check before buying.
 3. Faces (detect + embed from the 1024px copy, local model, owner-only), then
    objects. Agreed shape, not built: everything is a tag. `tags.kind` (yours,
    person, object), `media_tags.source` (owner or model@version) and `score`;
