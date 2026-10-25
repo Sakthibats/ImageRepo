@@ -16,7 +16,7 @@ import { bakeAlbum, bakeIndex } from './manifest.js';
  *             /claim  → a batch under a lease
  *             strip, resize, write orig/ drv/ post/ prev/ itself
  *             /complete → media rows, album bake, inbox copy deleted
- *             /fail     → retried, or given up on after MAX_ATTEMPTS
+ *             /fail     → retried after a growing wait, or given up on after MAX_ATTEMPTS
  *
  * The raw file still has its location in it, which is why it sits under
  * inbox/: no route serves that prefix, and the service deletes it once the
@@ -44,6 +44,8 @@ const PARTS_PER_CALL = 100;
 /** Each record is several D1 statements, and the album is re-baked once per call. */
 const RECORDS_PER_CALL = 20;
 const MAX_ATTEMPTS = 5;
+/** Seconds a failed file waits before its next attempt, so a passing outage does not use them all up. */
+const BACKOFF = [60, 300, 1800, 7200];
 /** An upload nobody came back to finish. R2's lifecycle rule removes its bytes too. */
 const ABANDONED_AFTER = 7 * 86400;
 /** A service checks in every 20s; three missed and it is reported offline. */
@@ -161,7 +163,11 @@ inbox.post('/start', async (c) => {
       results.push({ id, status: 'refused', error: `already being added to “${titles.get(row.album_id)}”` });
       continue;
     }
-    if (row && (row.state === 'ready' || row.state === 'claimed')) {
+    // R2 expires inbox/ after 7 days whatever D1 says, so a file still waiting
+    // then has to be sent again.
+    const expired = !!row && (row.state === 'ready' || row.state === 'claimed') &&
+      !(await c.env.BUCKET.head(r2Key.inbox(id, row.ext)));
+    if (row && (row.state === 'ready' || row.state === 'claimed') && !expired) {
       results.push({ id, status: 'queued' }); continue;
     }
     if (row && row.bytes !== size) {
@@ -170,20 +176,23 @@ inbox.post('/start', async (c) => {
     }
     const key = r2Key.inbox(id, row?.ext ?? ext);
 
-    if (!row || row.state === 'failed') {
+    if (!row || row.state === 'failed' || expired) {
       // A file given up on starts over: the user picking it again is the retry.
+      // Only from the state it was read in, so a service finishing it meanwhile wins.
       const multipartId = size >= MULTIPART_FROM ? await s3.createMultipart(key) : null;
       const lastModified = Number.isFinite(f.lastModified) ? Math.floor(Number(f.lastModified) / 1000) : null;
-      await db.prepare(`
+      const put = await db.prepare(`
         INSERT INTO uploads (id, kind, ext, bytes, orig_name, last_modified, album_id, folder_id,
                              state, multipart_id, part_size, attempts, created_at, updated_at)
         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'uploading', ?9, ?10, 0, ?11, ?11)
         ON CONFLICT(id) DO UPDATE SET
           state = 'uploading', multipart_id = excluded.multipart_id, part_size = excluded.part_size,
-          attempts = 0, error = NULL, album_id = excluded.album_id, folder_id = excluded.folder_id,
-          updated_at = excluded.updated_at
+          attempts = 0, error = NULL, runner = NULL, lease_until = NULL,
+          album_id = excluded.album_id, folder_id = excluded.folder_id, updated_at = excluded.updated_at
+        WHERE uploads.state = ?12
       `).bind(id, kind, ext, size, String(f.name).slice(0, 255), lastModified, b.albumId, folderId,
-        multipartId, multipartId ? partSizeFor(size) : null, ts).run();
+        multipartId, multipartId ? partSizeFor(size) : null, ts, row?.state ?? 'failed').run();
+      if (!put.meta?.changes) { results.push({ id, status: 'queued' }); continue; }
       row = {
         id, kind, ext, bytes: size, orig_name: f.name, last_modified: lastModified, album_id: b.albumId,
         folder_id: folderId, state: 'uploading', multipart_id: multipartId,
@@ -396,6 +405,7 @@ inbox.post('/heartbeat', async (c) => {
  * Hands a batch of waiting uploads to one service instance. A single
  * statement, so two instances asking at once never get the same file; a
  * lease, so one that crashes just lets its batch lapse back into the queue.
+ * `lease_until` on a waiting file is when it may next be tried (BACKOFF).
  */
 inbox.post('/claim', async (c) => {
   const b = await c.req.json<{ runner?: string; limit?: number; leaseSeconds?: number; kinds?: string[] }>()
@@ -415,7 +425,7 @@ inbox.post('/claim', async (c) => {
     UPDATE uploads SET state = 'claimed', runner = ?1, lease_until = ?2, updated_at = ?3
     WHERE id IN (
       SELECT id FROM uploads
-      WHERE (state = 'ready' OR (state = 'claimed' AND lease_until <= ?3))
+      WHERE state IN ('ready', 'claimed') AND COALESCE(lease_until, 0) <= ?3
         AND kind IN (${marks(kinds.length, 5)})
       ORDER BY created_at, id LIMIT ?4
     )
@@ -476,8 +486,8 @@ inbox.post('/complete', async (c) => {
 });
 
 /**
- * Files the service could not process. Back in the queue until MAX_ATTEMPTS,
- * then 'failed'. `permanent` is for a file that can never work, such as one
+ * Files the service could not process. Back in the queue, after a wait that
+ * grows with each attempt, until MAX_ATTEMPTS, then 'failed'. `permanent` is for a file that can never work, such as one
  * whose bytes do not hash to its id: it fails at once and its bytes are
  * deleted, so only re-picking the file can bring it back.
  */
@@ -494,12 +504,14 @@ inbox.post('/fail', async (c) => {
   const rows = await rowsById(db, items.map((i) => i.id));
   const stmt = db.prepare(`
     UPDATE uploads SET
-      attempts = attempts + 1, error = ?2, runner = ?3, lease_until = NULL, updated_at = ?4,
-      state = CASE WHEN ?5 OR attempts + 1 >= ${MAX_ATTEMPTS} THEN 'failed' ELSE 'ready' END
+      attempts = attempts + 1, error = ?2, runner = ?3, updated_at = ?4,
+      state = CASE WHEN ?5 OR attempts + 1 >= ${MAX_ATTEMPTS} THEN 'failed' ELSE 'ready' END,
+      lease_until = CASE WHEN ?5 OR attempts + 1 >= ${MAX_ATTEMPTS} THEN NULL ELSE ?6 END
     WHERE id = ?1 AND state = 'claimed'
   `);
+  const wait = (id: string) => BACKOFF[Math.min(rows.get(id)?.attempts ?? 0, BACKOFF.length - 1)];
   await db.batch(items.map((i) =>
-    stmt.bind(i.id, String(i.error ?? '').slice(0, 500), runner, ts, i.permanent ? 1 : 0)));
+    stmt.bind(i.id, String(i.error ?? '').slice(0, 500), runner, ts, i.permanent ? 1 : 0, ts + wait(i.id))));
 
   const doomed = items.filter((i) => i.permanent && rows.get(i.id)?.state === 'claimed')
     .map((i) => r2Key.inbox(i.id, rows.get(i.id)!.ext));

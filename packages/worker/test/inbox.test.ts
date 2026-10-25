@@ -198,15 +198,24 @@ console.log('\nprocessing service\n');
   check('completing twice does nothing the second time', dupe.json.recorded === 0);
 
   // hex(3): fails four times and goes back in the queue each time, then gives up.
-  const lease = () => w.sqlite.prepare(`UPDATE uploads SET lease_until = 0 WHERE state = 'claimed'`).run();
+  const lease = () => w.sqlite.prepare(`UPDATE uploads SET lease_until = 0 WHERE state IN ('ready', 'claimed')`).run();
+  const waits: number[] = [];
   for (let i = 1; i <= 5; i++) {
     await w.call('POST', '/admin/inbox/fail', { auth: service, body: { items: [{ id: hex(3), error: `boom ${i}` }] } });
     if (i < 5) {
+      const row = w.sqlite.prepare(`SELECT lease_until - updated_at AS n FROM uploads WHERE id = '${hex(3)}'`).get() as { n: number };
+      waits.push(row.n);
+      if (i === 1) {
+        const soon = await w.call('POST', '/admin/inbox/claim', { auth: service, body: { limit: 5 } });
+        check('a failed file is not handed out again at once', !soon.json.items.some((x: any) => x.id === hex(3)),
+          JSON.stringify(soon.json.items));
+      }
       lease();
       const c = await w.call('POST', '/admin/inbox/claim', { auth: service, body: { limit: 1 } });
       if (c.json.items[0]?.id !== hex(3)) check(`retry ${i} is handed out again`, false, JSON.stringify(c.json));
     }
   }
+  check('and waits longer after each failure', waits.join() === '60,300,1800,7200', waits.join());
   const summary = await w.call('GET', '/admin/inbox/summary', { auth: service });
   check('after five failures it is given up on, with its last error', summary.json.counts.failed === 1 &&
     summary.json.failed[0].error === 'boom 5' && summary.json.failed[0].attempts === 5, JSON.stringify(summary.json));
@@ -239,6 +248,27 @@ console.log('\nprocessing service\n');
   });
   check('picking a failed file again starts it over', retry.json.files[0].status === 'upload' &&
     count(w, `SELECT attempts AS n FROM uploads WHERE id = '${hex(5)}'`) === 0, JSON.stringify(retry.json));
+
+  // hex(6): waiting longer than R2 keeps inbox/, so its bytes are gone.
+  const old = await w.call('POST', '/admin/inbox/start', {
+    body: { albumId: 'trip', files: [{ id: hex(6), name: 'd.jpg', size: 20 }] },
+  });
+  await put(old.json.files[0].url, new Uint8Array(20));
+  await w.call('POST', '/admin/inbox/finish', { body: { ids: [hex(6)] } });
+  await w.call('POST', '/admin/inbox/claim', { auth: service, body: { runner: 'laptop', limit: 50 } });
+  await w.bucket.delete(`inbox/${hex(6)}.jpg`);
+  const resend = await w.call('POST', '/admin/inbox/start', {
+    body: { albumId: 'trip', files: [{ id: hex(6), name: 'd.jpg', size: 20 }] },
+  });
+  check('picking a waiting file whose bytes have expired asks for it again',
+    resend.json.files[0].status === 'upload' && count(w,
+      `SELECT COUNT(*) AS n FROM uploads WHERE id = '${hex(6)}' AND state = 'uploading' AND lease_until IS NULL`) === 1,
+    JSON.stringify(resend.json));
+  await w.call('POST', '/admin/inbox/fail', {
+    auth: service, body: { items: [{ id: hex(6), error: 'no longer in storage', permanent: true }] },
+  });
+  check('and the service giving up on the old claim does not undo that',
+    count(w, `SELECT COUNT(*) AS n FROM uploads WHERE id = '${hex(6)}' AND state = 'uploading'`) === 1);
 
   check('no location reaches the upload queue', !w.sqlite.prepare(`PRAGMA table_info(uploads)`).all()
     .some((col: any) => /lat|lon|place|gps|meta/.test(col.name)));
