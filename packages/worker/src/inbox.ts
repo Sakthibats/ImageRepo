@@ -82,8 +82,9 @@ async function rowsById(db: D1Database, ids: string[]): Promise<Map<string, Uplo
  * upload with these URLs. Calling it again for the same file is how a browser
  * resumes: a large file comes back with the parts R2 already holds.
  *
- * A file the library already has is filed into this album instead, so
- * dropping a photo into a second album links it rather than skipping it.
+ * A photo lives in one album, so a file that is in, or on its way to, another
+ * album is refused with that album's name. One the library has in no album
+ * (removed from its album earlier) is filed here.
  */
 inbox.post('/start', async (c) => {
   const b = await c.req.json<{
@@ -109,16 +110,25 @@ inbox.post('/start', async (c) => {
   }
 
   const ids = [...new Set(files.map((f) => f?.id).filter((id) => ID.test(id)))];
-  const known = new Set(ids.length
-    ? (await db.prepare(`SELECT id FROM media WHERE id IN (${marks(ids.length)})`).bind(...ids)
-      .all<{ id: string }>()).results.map((r) => r.id)
+  // Each known id with the album it is in, or null for none.
+  const known = new Map(ids.length
+    ? (await db.prepare(`
+        SELECT m.id, am.album_id FROM media m LEFT JOIN album_media am ON am.media_id = m.id
+        WHERE m.id IN (${marks(ids.length)})
+      `).bind(...ids).all<{ id: string; album_id: string | null }>()).results.map((r) => [r.id, r.album_id])
     : []);
   const pending = await rowsById(db, ids);
+  const elsewhere = [...new Set([...known.values(), ...[...pending.values()].map((r) => r.album_id)])]
+    .filter((a): a is string => a !== null && a !== b.albumId);
+  const titles = new Map(elsewhere.length
+    ? (await db.prepare(`SELECT id, title FROM albums WHERE id IN (${marks(elsewhere.length)})`)
+      .bind(...elsewhere).all<{ id: string; title: string }>()).results.map((r) => [r.id, r.title])
+    : []);
 
   const link = db.prepare(`
     INSERT INTO album_media (album_id, media_id, position, folder_id)
     SELECT ?1, id, COALESCE(taken_at, 0), ?3 FROM media WHERE id = ?2
-    ON CONFLICT(album_id, media_id) DO NOTHING
+    ON CONFLICT DO NOTHING
   `);
   const links: D1PreparedStatement[] = [];
   const results: StartResult[] = [];
@@ -136,12 +146,20 @@ inbox.post('/start', async (c) => {
     }
 
     if (known.has(id)) {
+      const inAlbum = known.get(id);
+      if (inAlbum && inAlbum !== b.albumId) {
+        results.push({ id, status: 'refused', error: `already in “${titles.get(inAlbum)}”` }); continue;
+      }
       links.push(link.bind(b.albumId, id, folderId));
       results.push({ id, status: 'known' });
       continue;
     }
 
     let row = pending.get(id);
+    if (row && row.state !== 'failed' && row.album_id !== b.albumId) {
+      results.push({ id, status: 'refused', error: `already being added to “${titles.get(row.album_id)}”` });
+      continue;
+    }
     if (row && (row.state === 'ready' || row.state === 'claimed')) {
       results.push({ id, status: 'queued' }); continue;
     }

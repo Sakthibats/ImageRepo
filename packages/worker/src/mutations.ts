@@ -124,8 +124,8 @@ mutations.patch('/albums/:id', async (c) => {
 });
 
 /**
- * Deletes an album. By default the media survive — they may live in other
- * albums, and an accidental album delete should not destroy photos.
+ * Deletes an album. By default the media survive, in no album, so an
+ * accidental album delete does not destroy photos.
  */
 mutations.delete('/albums/:id', async (c) => {
   const id = c.req.param('id');
@@ -136,11 +136,9 @@ mutations.delete('/albums/:id', async (c) => {
 
   let removedMedia = 0;
   if (alsoMedia) {
-    // Only media that exist in no OTHER album.
-    const { results } = await c.env.DB.prepare(`
-      SELECT media_id FROM album_media WHERE album_id = ?1
-        AND media_id NOT IN (SELECT media_id FROM album_media WHERE album_id <> ?1)
-    `).bind(id).all<{ media_id: string }>();
+    const { results } = await c.env.DB.prepare(
+      'SELECT media_id FROM album_media WHERE album_id = ?1'
+    ).bind(id).all<{ media_id: string }>();
     removedMedia = await deleteMediaRows(c.env, results.map((r) => r.media_id));
   }
 
@@ -273,35 +271,34 @@ mutations.post('/albums/:id/folder-items', async (c) => {
 
 // ------------------------------------------------------------------- media
 
+/**
+ * Moves media into this album from whichever album holds them, or files ones
+ * in no album. A photo lives in one album, and arrives loose: folders belong
+ * to the album it left.
+ */
 mutations.post('/albums/:id/media', async (c) => {
   const albumId = c.req.param('id');
-  const b = await body<{ mediaIds?: string[]; mode?: 'add' | 'move'; fromAlbum?: string }>(c);
+  const b = await body<{ mediaIds?: string[] }>(c);
   const ids = (b.mediaIds ?? []).filter((x) => /^[0-9a-f]{32}$/.test(x));
   if (!ids.length) return c.json({ error: 'mediaIds required' }, 400);
 
   const album = await c.env.DB.prepare('SELECT id FROM albums WHERE id = ?1').bind(albumId).first();
   if (!album) return c.json({ error: 'no such album' }, 404);
 
-  const add = c.env.DB.prepare(`
+  const from = await albumsOf(c.env, ids);
+  const move = c.env.DB.prepare(`
     INSERT INTO album_media (album_id, media_id, position)
-    SELECT ?1, ?2, COALESCE((SELECT taken_at FROM media WHERE id = ?2), 0)
-    WHERE EXISTS (SELECT 1 FROM media WHERE id = ?2)
-    ON CONFLICT(album_id, media_id) DO NOTHING
+    SELECT ?1, id, COALESCE(taken_at, 0) FROM media WHERE id = ?2
+    ON CONFLICT(media_id) DO UPDATE SET album_id = excluded.album_id, folder_id = NULL
+      WHERE album_id <> excluded.album_id
   `);
-  await c.env.DB.batch(ids.map((mid) => add.bind(albumId, mid)));
+  await c.env.DB.batch(ids.map((mid) => move.bind(albumId, mid)));
 
-  const touched = [albumId];
-  if (b.mode === 'move' && b.fromAlbum && b.fromAlbum !== albumId) {
-    const del = c.env.DB.prepare('DELETE FROM album_media WHERE album_id = ?1 AND media_id = ?2');
-    await c.env.DB.batch(ids.map((mid) => del.bind(b.fromAlbum!, mid)));
-    touched.push(b.fromAlbum);
-  }
-
-  await rebake(c.env, touched);
-  return c.json({ ok: true, count: ids.length, mode: b.mode ?? 'add' });
+  await rebake(c.env, [albumId, ...from]);
+  return c.json({ ok: true, count: ids.length });
 });
 
-/** Removes media from one album. The files and other memberships are untouched. */
+/** Takes media out of their album, leaving them in none. The files are untouched. */
 mutations.delete('/albums/:id/media', async (c) => {
   const albumId = c.req.param('id');
   const b = await body<{ mediaIds?: string[] }>(c);

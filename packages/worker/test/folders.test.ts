@@ -80,9 +80,18 @@ await w.call('POST', '/admin/albums/trip/folder-items', { body: { mediaIds: [tri
 m = await manifest(w, 'trip');
 check('a photo can go back to loose', !m.items.find((i: any) => i.id === trip[1]).f);
 
-await w.call('POST', '/admin/albums/kids/media', { body: { mediaIds: [trip[2]], mode: 'move', fromAlbum: 'trip' } });
+await w.call('POST', '/admin/albums/kids/media', { body: { mediaIds: [trip[2]] } });
 const kids = await manifest(w, 'kids');
 check('a photo moved to another album arrives loose', kids.items.some((i: any) => i.id === trip[2] && !i.f));
+check('and leaves the album it was in', !(await manifest(w, 'trip')).items.some((i: any) => i.id === trip[2]) &&
+  (w.sqlite.prepare(`SELECT COUNT(*) AS n FROM album_media WHERE media_id = ?`).get(trip[2]) as any).n === 1);
+const twice = await w.call('POST', '/admin/albums/kids/media', { body: { mediaIds: [trip[2]] } });
+check('moving it into the album it is in changes nothing', twice.status === 200 &&
+  (await manifest(w, 'kids')).items.some((i: any) => i.id === trip[2]));
+let second = true;
+try { w.sqlite.prepare(`INSERT INTO album_media (album_id, media_id) VALUES ('trip', ?)`).run(trip[2]); }
+catch { second = false; }
+check('D1 itself refuses a second album for a photo', !second);
 
 const del = await w.call('DELETE', `/admin/albums/trip/folders/${day1.json.id}`);
 m = await manifest(w, 'trip');

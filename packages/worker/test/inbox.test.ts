@@ -55,13 +55,25 @@ const day1 = (await w.call('POST', '/admin/albums/kids/folders', { body: { title
   check('a new file gets a presigned URL for its inbox key', f1.status === 'upload' &&
     f1.url.includes(`/imagerepo/inbox/${hex(1)}.heic?`) && f1.url.includes('X-Amz-Signature=') &&
     f1.url.includes('X-Amz-Expires=3600'), JSON.stringify(f1));
-  check('a file already in the library is not uploaded again', f2.status === 'known');
+  check('a file already in another album is refused, naming it',
+    f2.status === 'refused' && f2.error === 'already in “trip”', JSON.stringify(f2));
   check('a type with no stripper is refused', f3.status === 'refused' && /webp/.test(f3.error));
   check('a bad id is refused', f4.status === 'refused');
+  check('and it stays where it was', !(await manifestItems(w, 'kids')).some((i) => i.id === known) &&
+    count(w, `SELECT COUNT(*) AS n FROM album_media WHERE media_id = '${known}' AND album_id = 'trip'`) === 1);
 
+  await w.call('DELETE', '/admin/albums/trip/media', { body: { mediaIds: [known] } });
+  const orphan = await w.call('POST', '/admin/inbox/start', {
+    body: { albumId: 'kids', folderId: day1, files: [{ id: known, name: 'IMG_x.jpg', size: 1000 }] },
+  });
   const items = await manifestItems(w, 'kids');
-  check('a known file dropped into another album is filed there, in the folder being viewed',
-    items.some((i) => i.id === known && i.f === day1), JSON.stringify(items));
+  check('a known file in no album is not uploaded but filed here, in the folder being viewed',
+    orphan.json.files[0].status === 'known' && items.some((i) => i.id === known && i.f === day1),
+    JSON.stringify(items));
+  const back = await w.call('POST', '/admin/inbox/start', {
+    body: { albumId: 'kids', files: [{ id: known, name: 'IMG_x.jpg', size: 1000 }] },
+  });
+  check('picking it again in its own album is a no-op', back.json.files[0].status === 'known');
 
   const early = await w.call('POST', '/admin/inbox/finish', { body: { ids: [hex(1)] } });
   check('finishing before anything is uploaded is an error, and the upload starts over',
@@ -82,6 +94,11 @@ const day1 = (await w.call('POST', '/admin/albums/kids/folders', { body: { title
     body: { albumId: 'kids', files: [{ id: hex(1), name: 'IMG_1.HEIC', size: small.length }] },
   });
   check('picking it again while queued uploads nothing', restart.json.files[0].status === 'queued');
+  const elsewhere = await w.call('POST', '/admin/inbox/start', {
+    body: { albumId: 'trip', files: [{ id: hex(1), name: 'IMG_1.HEIC', size: small.length }] },
+  });
+  check('picking it in another album while queued is refused, naming the album it is going to',
+    elsewhere.json.files[0].error === 'already being added to “kids”', JSON.stringify(elsewhere.json));
 }
 
 console.log('\nresuming\n');

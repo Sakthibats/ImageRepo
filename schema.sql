@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS albums (
   manifest_ver  TEXT                  -- cache-busting token for the baked JSON
 );
 
--- Many-to-many from day one. A photo can live in several albums.
+-- One album per photo since migration 010 (it began many-to-many).
 CREATE TABLE IF NOT EXISTS album_media (
   album_id      TEXT NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
   media_id      TEXT NOT NULL REFERENCES media(id)  ON DELETE CASCADE,

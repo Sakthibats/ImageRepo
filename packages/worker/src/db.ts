@@ -38,7 +38,7 @@ export async function insertMedia(
   const link = db.prepare(`
     INSERT INTO album_media (album_id, media_id, position, folder_id)
     VALUES (?1, ?2, ?3, ?4)
-    ON CONFLICT(album_id, media_id) DO NOTHING
+    ON CONFLICT DO NOTHING
   `);
 
 

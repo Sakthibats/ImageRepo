@@ -76,7 +76,7 @@ console.log('\ndeleting media and albums\n');
   const w = makeWorld();
   const trip = await seedMedia(w, 250, 'trip');
   const kids = await seedMedia(w, 5, 'kids', 1000);
-  // One photo in both albums.
+  // One photo moved out of the album that is deleted later.
   await w.call('POST', '/admin/albums/kids/media', { body: { mediaIds: [trip[0]] } });
 
   const del = await w.call('DELETE', '/admin/media', { body: { mediaIds: trip.slice(100, 220) } });
@@ -87,7 +87,7 @@ console.log('\ndeleting media and albums\n');
 
   const purged = await w.call('DELETE', '/admin/albums/trip?media=delete');
   check('album purge reports what it deleted', purged.json.deletedMedia === 129, JSON.stringify(purged.json));
-  check('a photo also in another album survives', w.bucket.objects.has(`orig/${trip[0]}.jpg`) &&
+  check('a photo moved to another album survives', w.bucket.objects.has(`orig/${trip[0]}.jpg`) &&
     Boolean(w.sqlite.prepare('SELECT 1 FROM media WHERE id = ?').get(trip[0])));
   check('the rest of the album is gone from R2', !w.bucket.objects.has(`orig/${trip[1]}.jpg`));
   check('the deleted album has no manifests left', w.bucket.keys('man/album/trip.').length === 0,

@@ -48,7 +48,7 @@ const folder = (await w.call('POST', '/admin/albums/trip/folders', { body: { tit
 const api = apiFor(w);
 
 const a = noise(5000, 1), b = noise(6000, 2), c = noise(7000, 3), k = noise(4000, 4);
-// One the library already has, in another album.
+// One the library already has, in another album: refused.
 await addMedia(w, [{
   id: idOf(k), kind: 'photo', ext: 'jpg', bytes: k.length, width: 4, height: 3,
   origName: 'old.jpg', albums: ['kids'], derivatives: ['320'],
@@ -71,12 +71,12 @@ check('hashing in the browser gives the library’s ids, small files and large',
     (s) => states.push(s.bytesSent),
     { api, put: flaky },
   );
-  check('every new file is uploaded and queued', state.sent === 3 && queued.length === 3 && !state.failed.length,
-    JSON.stringify(state));
+  check('every new file is uploaded and queued', state.sent === 3 && queued.length === 3, JSON.stringify(state));
   check('the same file picked twice goes up once', state.files === 4);
-  check('a file the library has is not uploaded but filed into this album and folder',
-    state.known === 1 && count(w, `SELECT COUNT(*) AS n FROM album_media WHERE media_id = '${idOf(k)}'
-      AND album_id = 'trip' AND folder_id = '${folder}'`) === 1);
+  check('a file in another album is not uploaded, and is reported as being there',
+    state.failed.length === 1 && state.failed[0].name === 'old.jpg' && state.failed[0].error === 'already in “kids”' &&
+    count(w, `SELECT COUNT(*) AS n FROM album_media WHERE media_id = '${idOf(k)}' AND album_id = 'kids'`) === 1,
+    JSON.stringify(state.failed));
   check('a stale URL is replaced and the file still goes up', !expired && w.bucket.objects.has(`inbox/${idOf(b)}.heic`));
   check('progress reaches every byte sent', state.bytesSent === state.bytes && state.bytes === a.length + b.length + c.length,
     `${state.bytesSent} / ${state.bytes}`);
@@ -126,7 +126,7 @@ console.log('\nprocessing\n');
   await watchProcessing('trip', (left) => seen.push(left), () => false, api);
   check('the browser sees the queue empty once the service is done', seen.at(-1) === 0, JSON.stringify(seen));
   check('everything uploaded is in the album, the picked photos in their folder',
-    count(w, `SELECT COUNT(*) AS n FROM album_media WHERE album_id = 'trip' AND folder_id = '${folder}'`) === 4 &&
+    count(w, `SELECT COUNT(*) AS n FROM album_media WHERE album_id = 'trip' AND folder_id = '${folder}'`) === 3 &&
     count(w, `SELECT COUNT(*) AS n FROM uploads`) === 0 && !w.bucket.keys('inbox/').length);
 }
 
