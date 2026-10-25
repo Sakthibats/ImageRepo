@@ -2,7 +2,7 @@
 // inbox routes and a fake R2: what a browser does, end to end.
 import { createHash } from 'node:crypto';
 import { makeWorld, seedMedia, addMedia, accessJwt, check, finish, PREPROCESS_CLIENT_ID } from './harness.js';
-import { uploadFiles, watchProcessing, hashFile, type Api, type Put } from '../../web/src/upload.ts';
+import { uploadFiles, hashFile, type Api, type Put } from '../../web/src/upload.ts';
 
 type World = ReturnType<typeof makeWorld>;
 const MiB = 1024 * 1024;
@@ -18,7 +18,6 @@ function apiFor(w: World): Api {
     start: (albumId, files, folderId) => ok(w.call('POST', '/admin/inbox/start', { body: { albumId, files, folderId } })),
     parts: (id, partNumbers) => ok(w.call('POST', '/admin/inbox/parts', { body: { id, partNumbers } })),
     finish: (ids) => ok(w.call('POST', '/admin/inbox/finish', { body: { ids } })),
-    summary: (albumId) => ok(w.call('GET', `/admin/inbox/summary?album=${albumId}`)),
   };
 }
 
@@ -65,13 +64,13 @@ check('hashing in the browser gives the library’s ids, small files and large',
     return fetchPut(url, body, onBytes);
   };
   const states: number[] = [];
-  const { state, queued } = await uploadFiles(
+  const state = await uploadFiles(
     [file('a.jpg', a), file('b.HEIC', b), file('c.png', c), file('a copy.jpg', a), file('old.jpg', k)],
     { albumId: 'trip', folderId: folder },
     (s) => states.push(s.bytesSent),
     { api, put: flaky },
   );
-  check('every new file is uploaded and queued', state.sent === 3 && queued.length === 3, JSON.stringify(state));
+  check('every new file is uploaded and queued', state.sent === 3, JSON.stringify(state));
   check('the same file picked twice goes up once', state.files === 4);
   check('a file in another album is not uploaded, and is reported as being there',
     state.failed.length === 1 && state.failed[0].name === 'old.jpg' && state.failed[0].error === 'already in “kids”' &&
@@ -97,13 +96,13 @@ console.log('\na large video, interrupted and resumed\n');
     return fetchPut(url, body, onBytes);
   };
   const first = await uploadFiles([clip()], { albumId: 'trip' }, () => {}, { api, put: dying });
-  check('an interrupted upload is reported, not queued', first.state.failed.length === 1 && first.state.sent === 0,
-    JSON.stringify(first.state.failed));
+  check('an interrupted upload is reported, not queued', first.failed.length === 1 && first.sent === 0,
+    JSON.stringify(first.failed));
 
   let resumedBytes = 0;
   const counting: Put = async (url, body, onBytes) => { resumedBytes += body.size; return fetchPut(url, body, onBytes); };
   const again = await uploadFiles([clip()], { albumId: 'trip' }, () => {}, { api, put: counting });
-  check('picking it again sends only the parts that are missing', again.state.sent === 1 &&
+  check('picking it again sends only the parts that are missing', again.sent === 1 &&
     resumedBytes === big.length - 2 * 16 * MiB, `${resumedBytes}`);
   const stored = w.bucket.objects.get(`inbox/${idOf(big)}.mov`);
   check('and R2 ends up with the whole file', stored?.length === big.length && idOf(stored!) === idOf(big));
@@ -122,9 +121,9 @@ console.log('\nprocessing\n');
   }
   await w.call('POST', '/admin/inbox/complete', { auth: service, body: { records } });
 
-  const seen: number[] = [];
-  await watchProcessing('trip', (left) => seen.push(left), () => false, api);
-  check('the browser sees the queue empty once the service is done', seen.at(-1) === 0, JSON.stringify(seen));
+  const summary = (await w.call('GET', '/admin/inbox/summary?album=trip')).json;
+  check('the album has nothing left to process once the service is done',
+    !summary.counts.ready && !summary.counts.claimed && !summary.albums.trip, JSON.stringify(summary.counts));
   check('everything uploaded is in the album, the picked photos in their folder',
     count(w, `SELECT COUNT(*) AS n FROM album_media WHERE album_id = 'trip' AND folder_id = '${folder}'`) === 3 &&
     count(w, `SELECT COUNT(*) AS n FROM uploads`) === 0 && !w.bucket.keys('inbox/').length);

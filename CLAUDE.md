@@ -109,7 +109,8 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
   for the deployed `c002223`) and can be deleted. `main` is ahead of
   `origin/main`, unpushed. Production runs `c002223`; migrations 001–009
   applied. Not yet deployed: the quieter offline status in the uploader, and
-  one album per photo (migration 010; production had no photo in two).
+  one album per photo (migration 010; production had no photo in two), and
+  the album backlog line with Retry (not yet tried in a browser).
   R2 CORS and the `inbox/` lifecycle rule are set.
 - The CLI is gone, and so are its routes and D1 tables (`ingest_log`,
   `settings`). Every remaining table is in use.

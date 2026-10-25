@@ -69,8 +69,13 @@ export const adminApi = {
   inboxFinish: (ids: string[]) =>
     req<{ files: InboxFinish[] }>('/admin/inbox/finish', json('POST', { ids })),
 
-  inboxSummary: (albumId: string) =>
-    req<InboxSummary>(`/admin/inbox/summary?album=${encodeURIComponent(albumId)}`),
+  /** One album's uploads, or with no album every album's. */
+  inboxSummary: (albumId?: string) =>
+    req<InboxSummary>(`/admin/inbox/summary${albumId ? `?album=${encodeURIComponent(albumId)}` : ''}`),
+
+  /** Failed uploads back in the queue, if their bytes are still in storage. */
+  inboxRetry: (ids: string[]) =>
+    req<{ retried: number; gone: number }>('/admin/inbox/retry', json('POST', { ids })),
 
   folders: (albumId: string) =>
     req<{ folders: { id: string; title: string; n: number }[]; loose: number }>(`/admin/albums/${albumId}/folders`),
@@ -121,8 +126,12 @@ export type InboxStart =
 
 export interface InboxFinish { id: string; status: 'queued' | 'error'; error?: string; missing?: number[] }
 
+export type InboxCounts = Partial<Record<'uploading' | 'ready' | 'claimed' | 'failed', number>>;
+
 export interface InboxSummary {
-  counts: Partial<Record<'uploading' | 'ready' | 'claimed' | 'failed', number>>;
+  counts: InboxCounts;
+  /** The same, per album; albums with no uploads are absent. */
+  albums: Record<string, InboxCounts>;
   maxAttempts: number;
   failed: { id: string; orig_name: string; error: string; attempts: number }[];
   /** Processing services seen in the last week, most recent first. */

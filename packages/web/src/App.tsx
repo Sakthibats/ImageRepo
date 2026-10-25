@@ -8,6 +8,7 @@ import { ShareView } from './components/ShareView.tsx';
 import { AdminBar, Confirm } from './components/AdminBar.tsx';
 import { ShareManager } from './components/ShareManager.tsx';
 import { Uploader } from './components/Uploader.tsx';
+import { BacklogLine, pending, useBacklog } from './components/Backlog.tsx';
 import { TimelineView } from './components/TimelineView.tsx';
 import { TagsView } from './components/TagsView.tsx';
 import { TagDialog } from './components/TagDialog.tsx';
@@ -108,7 +109,10 @@ function OwnerApp() {
     } catch (e) { setError((e as Error).message); }
   }, []);
 
-  useEffect(() => { setSelection(new Set()); void reloadAlbum(open); }, [open, reloadAlbum]);
+  // A selection survives a reload of the same album: the backlog reloads it
+  // as photos finish processing, which can be every few seconds.
+  useEffect(() => { void reloadAlbum(open); }, [open, reloadAlbum]);
+  useEffect(() => { setSelection(new Set()); }, [open?.id]);
   // A different album starts on All photos; a refresh of the same one stays put.
   useEffect(() => { setView('all'); }, [open?.id]);
 
@@ -122,6 +126,9 @@ function OwnerApp() {
     await reloadAlbum(updated);
     setSelection(new Set());
   }, [open, reloadAlbum]);
+
+  // An open album's uploads, or on the album list every album's.
+  const backlog = useBacklog(Boolean(open) || tab === 'albums', open?.id, loadIndex);
 
   const toggleIn = useCallback((list: { id: string }[]) =>
     (id: string, index: number, shiftKey: boolean) => {
@@ -271,7 +278,13 @@ function OwnerApp() {
                         : <div className="album-blank" />}
                     </div>
                     <div className="album-name">{a.title}</div>
-                    <div className="muted small">{a.n} items</div>
+                    <div className="muted small">
+                      {a.n} items
+                      {pending(backlog.summary?.albums[a.id]) > 0 &&
+                        ` · ${pending(backlog.summary?.albums[a.id])} to process`}
+                      {(backlog.summary?.albums[a.id]?.failed ?? 0) > 0 &&
+                        <span className="danger-text"> · {backlog.summary?.albums[a.id]?.failed} failed</span>}
+                    </div>
                   </button>
                   <div className="album-tools">
                     <button className="icon-btn" title="Share"
@@ -330,9 +343,10 @@ function OwnerApp() {
         </div>
       </header>
 
+      <BacklogLine summary={backlog.summary} onRetried={backlog.check} />
+
       <Uploader albumId={open.id} folder={folder ?? undefined}
-                onProgress={() => { void refresh(); }}
-                onDone={() => { void refresh(); notify('Upload complete'); }} />
+                onDone={() => { void refresh(); backlog.check(); notify('Upload complete'); }} />
 
       {items && (
         <FolderStrip

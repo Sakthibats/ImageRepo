@@ -1,6 +1,6 @@
 import { createSHA256 } from 'hash-wasm';
 import { MEDIA_EXT } from '@imagerepo/shared';
-import { adminApi, type InboxFile, type InboxStart, type InboxSummary } from './admin.ts';
+import { adminApi, type InboxFile, type InboxStart } from './admin.ts';
 
 /**
  * Browser uploads. Files go to R2 exactly as picked, straight from the
@@ -46,7 +46,6 @@ export interface Api {
   start: typeof adminApi.inboxStart;
   parts: typeof adminApi.inboxParts;
   finish: typeof adminApi.inboxFinish;
-  summary: typeof adminApi.inboxSummary;
 }
 
 /** Sends one body to a presigned URL, reporting bytes sent so far. */
@@ -54,7 +53,7 @@ export type Put = (url: string, body: Blob, onBytes: (sent: number) => void) => 
 
 const defaultApi: Api = {
   start: adminApi.inboxStart, parts: adminApi.inboxParts,
-  finish: adminApi.inboxFinish, summary: adminApi.inboxSummary,
+  finish: adminApi.inboxFinish,
 };
 
 export async function uploadFiles(
@@ -62,14 +61,13 @@ export async function uploadFiles(
   target: { albumId: string; folderId?: string },
   onState: (s: UploadState) => void,
   deps: { api?: Api; put?: Put } = {},
-): Promise<{ state: UploadState; queued: string[] }> {
+): Promise<UploadState> {
   const api = deps.api ?? defaultApi;
   const put = deps.put ?? xhrPut;
   const state: UploadState = {
     files: files.length, hashed: 0, sent: 0, known: 0,
     bytes: files.reduce((n, f) => n + f.size, 0), bytesSent: 0, failed: [], done: false,
   };
-  const queued: string[] = [];
   const emit = throttled(() => onState({ ...state, failed: [...state.failed] }), 150);
   const changed = new Signal();
   const fail = (file: File, e: unknown) => {
@@ -171,7 +169,7 @@ export async function uploadFiles(
         const byId = new Map(results.map((r) => [r.id, r]));
         for (const [id, file] of batch) {
           const r = byId.get(id);
-          if (r?.status === 'queued') { state.sent++; queued.push(id); }
+          if (r?.status === 'queued') state.sent++;
           else if (r?.error === 'parts missing') fail(file, 'some parts did not arrive; pick it again to resume');
           else fail(file, r?.error ?? 'not confirmed');
         }
@@ -212,7 +210,7 @@ export async function uploadFiles(
       const r = byId.get(id);
       if (!r) { fail(file, 'no answer from the server'); continue; }
       if (r.status === 'known') { state.known++; notSending(file); continue; }
-      if (r.status === 'queued') { state.sent++; queued.push(id); notSending(file); continue; }
+      if (r.status === 'queued') { state.sent++; notSending(file); continue; }
       if (r.status === 'refused') { fail(file, r.error); continue; }
       if (r.status !== 'upload') continue;
       const up = r;
@@ -224,7 +222,7 @@ export async function uploadFiles(
             ? await sendWhole(file, id, up.url)
             : (await sendParts(file, id, up.partSize, up.partCount, up.done), true);
           if (sent) finished(id, file);
-          else { state.sent++; queued.push(id); }
+          else state.sent++;
         } catch (e) {
           fail(file, e);
         } finally {
@@ -241,28 +239,7 @@ export async function uploadFiles(
   await flushFinish();
   state.done = true;
   emit.now();
-  return { state, queued };
-}
-
-/**
- * Waits for the processing service to work through this album's queue,
- * reporting how many are left. Ends when none are, or when `stopped` says so.
- */
-export async function watchProcessing(
-  albumId: string,
-  onUpdate: (left: number, summary: InboxSummary) => void,
-  stopped: () => boolean,
-  api: Pick<Api, 'summary'> = defaultApi,
-): Promise<void> {
-  while (!stopped()) {
-    try {
-      const s = await api.summary(albumId);
-      const left = (s.counts.ready ?? 0) + (s.counts.claimed ?? 0);
-      onUpdate(left, s);
-      if (!left) return;
-    } catch { /* a blip; ask again */ }
-    await sleep(3000);
-  }
+  return state;
 }
 
 export async function hashFile(file: Blob): Promise<string> {

@@ -205,6 +205,9 @@ changes.
 - **Photos** is a timeline of the whole library; **Albums** and **Tags** organise it.
 - In an album: **New folder**, select photos and **Move to folder…**, **Set as cover…**,
   **Share**. Uploads made while a folder is open go into it.
+- Under an album's title: whether the processing service is running, how many uploads are
+  waiting or processing, and what failed, with **Retry** (no re-upload while the file is
+  still in storage, 7 days). The album list shows the same counts per album.
 - Deleting an album keeps its photos, in no album, unless you tick **Also delete its photos**.
 - **Settings** has **Purge everything**: every file, album, tag and share link, no undo,
   confirmed by typing `purge everything`, and only when signed in through Access.
