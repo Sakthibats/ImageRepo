@@ -220,11 +220,25 @@ console.log('\nprocessing service\n');
   check('a permanent failure deletes the bytes at once', !w.bucket.objects.has(`inbox/${hex(5)}.mov`) &&
     count(w, `SELECT COUNT(*) AS n FROM uploads WHERE id = '${hex(5)}' AND state = 'failed'`) === 1);
 
+  const albums = (await w.call('GET', '/admin/inbox/summary')).json.albums;
+  check('the summary counts uploads per album', albums.trip?.failed === 2 && !albums.kids?.failed,
+    JSON.stringify(albums));
+
+  const denied = await w.call('POST', '/admin/inbox/retry', { auth: service, body: { ids: [hex(3)] } });
+  check('the service cannot retry uploads', denied.status === 403, String(denied.status));
+  const retried = await w.call('POST', '/admin/inbox/retry', { body: { ids: [hex(3), hex(5), hex(1)] } });
+  check('a failed upload still in the inbox goes back in the queue, with fresh attempts',
+    retried.json.retried === 1 &&
+    count(w, `SELECT COUNT(*) AS n FROM uploads WHERE id = '${hex(3)}' AND state = 'ready' AND attempts = 0`) === 1,
+    JSON.stringify(retried.json));
+  check('one whose bytes are gone stays failed, counted as gone', retried.json.gone === 1 &&
+    count(w, `SELECT COUNT(*) AS n FROM uploads WHERE id = '${hex(5)}' AND state = 'failed'`) === 1);
+
   const retry = await w.call('POST', '/admin/inbox/start', {
-    body: { albumId: 'trip', files: [{ id: hex(3), name: 'b.jpg', size: 50 }] },
+    body: { albumId: 'trip', files: [{ id: hex(5), name: 'clip.MOV', size: 70 * MiB + 123 }] },
   });
   check('picking a failed file again starts it over', retry.json.files[0].status === 'upload' &&
-    count(w, `SELECT attempts AS n FROM uploads WHERE id = '${hex(3)}'`) === 0);
+    count(w, `SELECT attempts AS n FROM uploads WHERE id = '${hex(5)}'`) === 0, JSON.stringify(retry.json));
 
   check('no location reaches the upload queue', !w.sqlite.prepare(`PRAGMA table_info(uploads)`).all()
     .some((col: any) => /lat|lon|place|gps|meta/.test(col.name)));

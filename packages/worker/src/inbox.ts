@@ -11,6 +11,7 @@ import { bakeAlbum, bakeIndex } from './manifest.js';
  *   browser:  /start  → presigned URLs (or "already have it")
  *             PUT the raw file straight to R2 at inbox/{id}.{ext}
  *             /finish → the file is checked for size and queued
+ *             /summary → what is waiting, per album; /retry → failed ones requeued
  *   service:  /heartbeat every 20s, so the app can say whether one is running
  *             /claim  → a batch under a lease
  *             strip, resize, write orig/ drv/ post/ prev/ itself
@@ -303,12 +304,22 @@ function markReady(db: D1Database, id: string) {
   `).bind(id, now()).run();
 }
 
-/** Where uploads stand, for the progress display and for the service's own logging. */
+/**
+ * Where uploads stand, in total and per album: the app's backlog display and
+ * album badges, and the service's own logging.
+ */
 inbox.get('/summary', async (c) => {
   const album = c.req.query('album') ?? null;
-  const { results: counts } = await c.env.DB.prepare(`
-    SELECT state, COUNT(*) AS n FROM uploads WHERE (?1 IS NULL OR album_id = ?1) GROUP BY state
-  `).bind(album).all<{ state: string; n: number }>();
+  const { results: rows } = await c.env.DB.prepare(`
+    SELECT album_id, state, COUNT(*) AS n FROM uploads WHERE (?1 IS NULL OR album_id = ?1)
+    GROUP BY album_id, state
+  `).bind(album).all<{ album_id: string; state: string; n: number }>();
+  const counts: Record<string, number> = {};
+  const albums: Record<string, Record<string, number>> = {};
+  for (const r of rows) {
+    counts[r.state] = (counts[r.state] ?? 0) + r.n;
+    (albums[r.album_id] ??= {})[r.state] = r.n;
+  }
   const { results: failed } = await c.env.DB.prepare(`
     SELECT id, orig_name, error, attempts, updated_at FROM uploads
     WHERE state = 'failed' AND (?1 IS NULL OR album_id = ?1)
@@ -320,7 +331,8 @@ inbox.get('/summary', async (c) => {
     WHERE last_seen > ?1 ORDER BY last_seen DESC LIMIT 10
   `).bind(ts - 7 * 86400).all<{ name: string; kinds: string; busy: number; state: string; last_seen: number }>();
   return c.json({
-    counts: Object.fromEntries(counts.map((r) => [r.state, r.n])),
+    counts,
+    albums,
     maxAttempts: MAX_ATTEMPTS,
     failed,
     runners: runners.map((r) => ({
@@ -328,6 +340,39 @@ inbox.get('/summary', async (c) => {
       online: r.state === 'running' && r.last_seen > ts - ONLINE_WITHIN,
     })),
   });
+});
+
+/**
+ * Puts failed uploads back in the queue with fresh attempts, without the
+ * browser sending them again. Only while their bytes are still in the inbox:
+ * one refused for good, or past R2's 7-day expiry, stays failed and is
+ * counted as gone, and picking the file again is then the retry.
+ */
+inbox.post('/retry', async (c) => {
+  const b = await c.req.json<{ ids?: string[] }>().catch(() => ({} as Record<string, never>));
+  const ids = [...new Set((Array.isArray(b.ids) ? b.ids : []).filter((id) => ID.test(id)))];
+  if (!ids.length) return c.json({ error: 'ids required' }, 400);
+  if (ids.length > FILES_PER_CALL) return c.json({ error: `at most ${FILES_PER_CALL} ids per call` }, 413);
+  const db = c.env.DB;
+
+  const rows = await rowsById(db, ids);
+  const retried: string[] = [];
+  let gone = 0;
+  for (const id of ids) {
+    const row = rows.get(id);
+    if (row?.state !== 'failed') continue;
+    if (await c.env.BUCKET.head(r2Key.inbox(id, row.ext))) retried.push(id);
+    else gone++;
+  }
+  if (retried.length) {
+    const reset = db.prepare(`
+      UPDATE uploads SET state = 'ready', attempts = 0, error = NULL, runner = NULL,
+        lease_until = NULL, updated_at = ?2
+      WHERE id = ?1 AND state = 'failed'
+    `);
+    await db.batch(retried.map((id) => reset.bind(id, now())));
+  }
+  return c.json({ retried: retried.length, gone });
 });
 
 // ------------------------------------------------------------------ service
