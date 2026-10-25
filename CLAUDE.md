@@ -18,12 +18,16 @@ setting it up.
 browser  hash → POST /admin/inbox/start → PUT inbox/{id}.{ext} (presigned, parts >64MB) → /finish
 service  /admin/inbox/claim → download, re-hash → stages → R2 orig/ drv/ post/ prev/
          → /admin/inbox/complete (Worker writes D1, bakes album, deletes inbox copy)
-         /admin/inbox/heartbeat every 20s → `runners`; the uploader shows online/offline
+         /admin/inbox/heartbeat every 20s → `runners`
+web      /admin/inbox/summary → album backlog line (service online/offline, waiting,
+         processing, failed) and per-album counts; /admin/inbox/retry requeues failed
+         uploads still in inbox/ (owner only)
 ```
 
 `uploads` (migration 007) holds files until processed; nothing reaches `media`
 or a manifest before then. Routes: `packages/worker/src/inbox.ts`.
-Browser side: `packages/web/src/upload.ts`.
+Browser side: `packages/web/src/upload.ts` (sending only) and
+`components/Backlog.tsx` (one poller for the album view and album list).
 
 ## Layout
 
@@ -108,24 +112,42 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 - Work happens on `main`. `cli-stages` is merged into it (PR #1, then locally
   for the deployed `c002223`) and can be deleted. `main` is ahead of
   `origin/main`, unpushed. Production runs `c002223`; migrations 001–009
-  applied. Not yet deployed: the quieter offline status in the uploader, and
-  one album per photo (migration 010; production had no photo in two), and
-  the album backlog line with Retry (not yet tried in a browser).
+  applied. Not yet deployed:
+  - the quieter offline status;
+  - one album per photo (migration 010; production had no photo in two, so
+    the unique index applies cleanly). Copy/Add to album became Move;
+  - the album backlog line, per-album counts on the album list, and Retry
+    without re-upload. The uploader now only sends; processing shows in the
+    backlog line. Not yet tried in a browser (Vite proxies to production,
+    which lacks the routes until deployed).
   R2 CORS and the `inbox/` lifecycle rule are set.
 - The CLI is gone, and so are its routes and D1 tables (`ingest_log`,
   `settings`). Every remaining table is in use.
 - The library was purged and is being re-added through the browser. The
   service runs on the laptop (`python -m preprocessing run`); not hosted yet.
 - Verified end to end: photos from laptop and iPhone; the service's online and
-  offline status in the uploader. Not yet: real iPhone video (HEVC/HDR,
-  whether the picker converts it), the Docker image (never built), hosting.
+  offline status (in the uploader, before it moved to the backlog line). Not
+  yet: real iPhone video (HEVC/HDR, whether the picker converts it), the
+  Docker image (never built), hosting.
+- The owner plans to add 100k+ photos from laptop and disk, through the
+  browser only (no Google Photos import), into albums with one level of
+  folders (e.g. Wedding → ROM, Religious, Group shots).
 
 ## Planned next
 
-0. Push `main` (production's code is on it only locally), then deploy it.
-1. A backlog mode in the service: claim `/admin/stages/claim` work so a stage
+0. Push `main` (production's code is on it only locally), then deploy it and
+   check the backlog line in a browser.
+1. Close the 7-day gap: R2 expires `inbox/` after 7 days while D1 still says
+   `ready`. Treat a missing inbox object as a `PermanentError` in the service;
+   have `/start` re-check a waiting file's bytes and ask for a fresh upload;
+   back off between retries (`/fail` requeues at once, so a network blip burns
+   all 5 attempts). Then add "kept for 7 days" to the offline message.
+2. Before the bulk upload: bakes are a full album rebuild per `/complete`
+   (≤20 records), quadratic for big albums; batch them and consider paged
+   manifests. Measure service throughput on ~1,000 files first.
+3. A backlog mode in the service: claim `/admin/stages/claim` work so a stage
    version bump or a new stage re-processes existing media from `orig/`.
    Stripped JPEGs in `orig/` have lost their EXIF orientation: take it from
    `raw_meta.Orientation`, or rotated photos come out sideways.
-2. Host the service (Docker image exists; any always-on box or Cloudflare Containers).
-3. Faces (detect + embed from the 1024px copy, local model, owner-only), then objects.
+4. Host the service (Docker image exists; any always-on box or Cloudflare Containers).
+5. Faces (detect + embed from the 1024px copy, local model, owner-only), then objects.
