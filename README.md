@@ -123,8 +123,9 @@ erDiagram
   }
 ```
 
-A photo can be in several albums, and in at most one folder of each (folders are one
-level deep). Filing a photo changes one `album_media` row; nothing in R2 moves. Any change
+A photo is in one album (or none, once removed from it), and in at most one of its
+folders (folders are one level deep). An upload of a file that is in another album is
+refused, naming that album. Filing a photo changes one `album_media` row; nothing in R2 moves. Any change
 to an album re-bakes its manifest under a new version, which the app then loads.
 
 ### Sharing
@@ -204,8 +205,7 @@ changes.
 - **Photos** is a timeline of the whole library; **Albums** and **Tags** organise it.
 - In an album: **New folder**, select photos and **Move to folder…**, **Set as cover…**,
   **Share**. Uploads made while a folder is open go into it.
-- Deleting an album keeps its photos unless you tick **Also delete its photos**; photos
-  in another album are kept either way.
+- Deleting an album keeps its photos, in no album, unless you tick **Also delete its photos**.
 - **Settings** has **Purge everything**: every file, album, tag and share link, no undo,
   confirmed by typing `purge everything`, and only when signed in through Access.
 
