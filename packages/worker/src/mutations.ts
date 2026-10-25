@@ -1,15 +1,14 @@
 import { Hono } from 'hono';
 import type { Env } from './types.js';
 import { PHOTO_WIDTHS } from '@imagerepo/shared';
-import { bakeAlbum, bakeIndex, deleteKeys, pruneManifests } from './manifest.js';
 
 /**
  * Owner-only mutations. Mounted under /admin, which requireAdmin() guards, so
  * nothing here is reachable by a share-link guest — guests only ever touch
  * /s/*, which has no mutation routes at all.
  *
- * Every write that changes what an album contains re-bakes that album's
- * manifests, so the static read path never goes stale.
+ * Writes touch D1 only: every read is live, and the counts and sort dates
+ * listings use are kept by triggers (migration 011).
  */
 export const mutations = new Hono<{ Bindings: Env }>({ strict: false });
 
@@ -29,30 +28,9 @@ const chunks = <T>(xs: T[], n = CHUNK): T[][] =>
   Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
 const marks = (n: number) => Array.from({ length: n }, (_, i) => `?${i + 1}`).join(',');
 
-/** Albums holding any of these media. */
-async function albumsOf(env: Env, ids: string[]): Promise<string[]> {
-  const out: string[] = [];
-  for (const part of chunks(ids)) {
-    const { results } = await env.DB.prepare(
-      `SELECT DISTINCT album_id FROM album_media WHERE media_id IN (${marks(part.length)})`
-    ).bind(...part).all<{ album_id: string }>();
-    out.push(...results.map((r) => r.album_id));
-  }
-  return out;
-}
-
 /** Parses a JSON body, treating a malformed one as empty rather than a 500. */
 async function body<T extends object>(c: { req: { json: <U>() => Promise<U> } }): Promise<Partial<T>> {
   return c.req.json<Partial<T>>().catch(() => ({} as Partial<T>));
-}
-
-async function rebake(env: Env, albumIds: string[]) {
-  for (const id of [...new Set(albumIds)]) {
-    // An album deleted in this same request has nothing to bake.
-    const exists = await env.DB.prepare('SELECT 1 FROM albums WHERE id = ?1').bind(id).first();
-    if (exists) await bakeAlbum(env.DB, env.BUCKET, id);
-  }
-  await bakeIndex(env.DB, env.BUCKET);
 }
 
 // ------------------------------------------------------------------ albums
@@ -77,8 +55,6 @@ mutations.post('/albums', async (c) => {
   await c.env.DB.prepare(
     `INSERT INTO albums (id, title, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)`
   ).bind(id, title, now()).run();
-
-  await rebake(c.env, [id]);
   return c.json({ ok: true, id, title });
 });
 
@@ -118,8 +94,6 @@ mutations.patch('/albums/:id', async (c) => {
       updated_at  = ?5
     WHERE id = ?1
   `).bind(id, title, b.description ?? null, b.coverId ?? null, now()).run();
-
-  await rebake(c.env, [id]);
   return c.json({ ok: true });
 });
 
@@ -144,15 +118,12 @@ mutations.delete('/albums/:id', async (c) => {
 
   await c.env.DB.prepare('DELETE FROM albums WHERE id = ?1').bind(id).run();
   // share_links and album_media cascade via the schema's foreign keys.
-  await pruneManifests(c.env.BUCKET, id);
-  await bakeIndex(c.env.DB, c.env.BUCKET);
   return c.json({ ok: true, deletedAlbum: id, deletedMedia: removedMedia });
 });
 
 // ----------------------------------------------------------------- folders
 // One level inside an album. A folder is only a label on album_media rows,
-// so creating, renaming and filling one touches D1 and the baked manifest;
-// no object in R2 moves.
+// so creating, renaming and filling one touches D1 alone; no object in R2 moves.
 
 const FOLDER_ID = /^[0-9a-f]{12}$/;
 const newFolderId = () => crypto.randomUUID().replace(/-/g, '').slice(0, 12);
@@ -170,20 +141,6 @@ async function folderClash(env: Env, albumId: string, title: string, except = ''
   ).bind(albumId, title, except).first<{ title: string }>();
 }
 
-/** The album's folders with counts, for the share dialog. */
-mutations.get('/albums/:id/folders', async (c) => {
-  const { results } = await c.env.DB.prepare(`
-    SELECT f.id, f.title, COUNT(am.media_id) AS n
-    FROM folders f LEFT JOIN album_media am ON am.folder_id = f.id AND am.album_id = f.album_id
-    WHERE f.album_id = ?1
-    GROUP BY f.id ORDER BY f.title
-  `).bind(c.req.param('id')).all();
-  const loose = await c.env.DB.prepare(
-    'SELECT COUNT(*) AS n FROM album_media WHERE album_id = ?1 AND folder_id IS NULL'
-  ).bind(c.req.param('id')).first<{ n: number }>();
-  return c.json({ folders: results, loose: loose?.n ?? 0 });
-});
-
 mutations.post('/albums/:id/folders', async (c) => {
   const albumId = c.req.param('id');
   const b = await body<{ title?: string }>(c);
@@ -199,7 +156,6 @@ mutations.post('/albums/:id/folders', async (c) => {
   await c.env.DB.prepare(
     'INSERT INTO folders (id, album_id, title, created_at) VALUES (?1, ?2, ?3, ?4)'
   ).bind(id, albumId, title, now()).run();
-  await rebake(c.env, [albumId]);
   return c.json({ ok: true, id, title });
 });
 
@@ -229,7 +185,6 @@ mutations.patch('/albums/:id/folders/:fid', async (c) => {
       cover_id = CASE WHEN ?3 = 1 THEN ?4 ELSE cover_id END
     WHERE id = ?1
   `).bind(folder.id, title, b.coverId === undefined ? 0 : 1, b.coverId ?? null).run();
-  await rebake(c.env, [albumId]);
   return c.json({ ok: true });
 });
 
@@ -240,7 +195,6 @@ mutations.delete('/albums/:id/folders/:fid', async (c) => {
   if (!folder) return c.json({ error: 'no such folder' }, 404);
   // album_media.folder_id is ON DELETE SET NULL.
   await c.env.DB.prepare('DELETE FROM folders WHERE id = ?1').bind(folder.id).run();
-  await rebake(c.env, [albumId]);
   return c.json({ ok: true, deleted: folder.id });
 });
 
@@ -264,8 +218,6 @@ mutations.post('/albums/:id/folder-items', async (c) => {
     WHERE album_id = ?2 AND media_id IN (${part.map((_, i) => `?${i + 3}`).join(',')})
   `).bind(folderId, albumId, ...part)));
   const moved = results.reduce((n, r) => n + (r.meta.changes ?? 0), 0);
-
-  await rebake(c.env, [albumId]);
   return c.json({ ok: true, moved, folderId });
 });
 
@@ -285,7 +237,6 @@ mutations.post('/albums/:id/media', async (c) => {
   const album = await c.env.DB.prepare('SELECT id FROM albums WHERE id = ?1').bind(albumId).first();
   if (!album) return c.json({ error: 'no such album' }, 404);
 
-  const from = await albumsOf(c.env, ids);
   const move = c.env.DB.prepare(`
     INSERT INTO album_media (album_id, media_id, sort_ts)
     SELECT ?1, id, sort_ts FROM media WHERE id = ?2
@@ -293,8 +244,6 @@ mutations.post('/albums/:id/media', async (c) => {
       WHERE album_id <> excluded.album_id
   `);
   await c.env.DB.batch(ids.map((mid) => move.bind(albumId, mid)));
-
-  await rebake(c.env, [albumId, ...from]);
   return c.json({ ok: true, count: ids.length });
 });
 
@@ -307,7 +256,6 @@ mutations.delete('/albums/:id/media', async (c) => {
 
   const del = c.env.DB.prepare('DELETE FROM album_media WHERE album_id = ?1 AND media_id = ?2');
   await c.env.DB.batch(ids.map((mid) => del.bind(albumId, mid)));
-  await rebake(c.env, [albumId]);
   return c.json({ ok: true, removed: ids.length });
 });
 
@@ -318,11 +266,6 @@ mutations.patch('/media/:id', async (c) => {
     'UPDATE media SET caption = ?2 WHERE id = ?1'
   ).bind(id, b.caption?.slice(0, 500) ?? null).run();
   if (!r.meta.changes) return c.json({ error: 'no such media' }, 404);
-
-  const { results } = await c.env.DB.prepare(
-    'SELECT album_id FROM album_media WHERE media_id = ?1'
-  ).bind(id).all<{ album_id: string }>();
-  await rebake(c.env, results.map((r) => r.album_id));
   return c.json({ ok: true });
 });
 
@@ -332,9 +275,7 @@ mutations.delete('/media', async (c) => {
   const ids = (b.mediaIds ?? []).filter((x) => /^[0-9a-f]{32}$/.test(x));
   if (!ids.length) return c.json({ error: 'mediaIds required' }, 400);
 
-  const albums = await albumsOf(c.env, ids);
   const deleted = await deleteMediaRows(c.env, ids);
-  await rebake(c.env, albums);
   return c.json({ ok: true, deleted });
 });
 
@@ -351,6 +292,11 @@ function mediaKeys(row: { id: string; kind: string; ext: string; drv_ext: string
     `prev/${row.id}.mp4`,
     ...PHOTO_WIDTHS.map((w) => `drv/${row.id}/${w}.${dx}`),
   ];
+}
+
+/** R2 deletes at most 1000 keys per call. */
+async function deleteKeys(bucket: R2Bucket, keys: string[]) {
+  for (let i = 0; i < keys.length; i += 1000) await bucket.delete(keys.slice(i, i + 1000));
 }
 
 /** Shared by media delete and album-delete-with-media. */

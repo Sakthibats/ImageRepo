@@ -1,6 +1,6 @@
 // Browser uploads through presigned URLs, and the processing service's queue.
 import {
-  makeWorld, seedMedia, accessJwt, check, finish, s3State, PREPROCESS_CLIENT_ID,
+  makeWorld, seedMedia, albumView, accessJwt, check, finish, s3State, PREPROCESS_CLIENT_ID,
 } from './harness.js';
 
 type World = ReturnType<typeof makeWorld>;
@@ -25,11 +25,7 @@ async function processed(w: World, id: string, o: { ext?: string; albums?: strin
   };
 }
 
-async function manifestItems(w: World, album: string) {
-  const index = await w.call('GET', '/a/manifest/index');
-  const ver = index.json.albums.find((a: any) => a.id === album)?.ver;
-  return (await w.call('GET', `/a/manifest/album/${album}/${ver}`)).json.items as any[];
-}
+const albumItems = async (w: World, album: string) => (await albumView(w, album)).items;
 
 console.log('\nbrowser uploads\n');
 
@@ -59,14 +55,14 @@ const day1 = (await w.call('POST', '/admin/albums/kids/folders', { body: { title
     f2.status === 'refused' && f2.error === 'already in “trip”', JSON.stringify(f2));
   check('a type with no stripper is refused', f3.status === 'refused' && /webp/.test(f3.error));
   check('a bad id is refused', f4.status === 'refused');
-  check('and it stays where it was', !(await manifestItems(w, 'kids')).some((i) => i.id === known) &&
+  check('and it stays where it was', !(await albumItems(w, 'kids')).some((i) => i.id === known) &&
     count(w, `SELECT COUNT(*) AS n FROM album_media WHERE media_id = '${known}' AND album_id = 'trip'`) === 1);
 
   await w.call('DELETE', '/admin/albums/trip/media', { body: { mediaIds: [known] } });
   const orphan = await w.call('POST', '/admin/inbox/start', {
     body: { albumId: 'kids', folderId: day1, files: [{ id: known, name: 'IMG_x.jpg', size: 1000 }] },
   });
-  const items = await manifestItems(w, 'kids');
+  const items = await albumItems(w, 'kids');
   check('a known file in no album is not uploaded but filed here, in the folder being viewed',
     orphan.json.files[0].status === 'known' && items.some((i) => i.id === known && i.f === day1),
     JSON.stringify(items));
@@ -186,7 +182,7 @@ console.log('\nprocessing service\n');
   const rec = await processed(w, hex(1), { ext: 'heic' });
   const ok = await w.call('POST', '/admin/inbox/complete', { auth: service, body: { runner: 'laptop', records: [rec] } });
   check('the service records a processed file', ok.json.recorded === 1, JSON.stringify(ok.json));
-  const items = await manifestItems(w, 'kids');
+  const items = await albumItems(w, 'kids');
   check('it appears at once in the album it was dropped into, in its folder, not the album the record named',
     items.some((i) => i.id === hex(1) && i.f === day1) &&
     count(w, `SELECT COUNT(*) AS n FROM album_media WHERE album_id = 'somewhere-else'`) === 0);

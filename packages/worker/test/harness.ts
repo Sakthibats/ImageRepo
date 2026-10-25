@@ -292,6 +292,19 @@ export function makeWorld(o: { s3?: boolean } = {}) {
   return { env, sqlite, bucket, call };
 }
 
+/** An album as the app reads it: its counts and folders, then every page of its photos. */
+export async function albumView(world: ReturnType<typeof makeWorld>, album: string) {
+  const detail = (await world.call('GET', `/a/albums/${album}`)).json;
+  const items: any[] = [];
+  let after = '';
+  do {
+    const page = await world.call('GET', `/a/media?album=${album}${after ? `&after=${after}` : ''}`);
+    items.push(...page.json.items);
+    after = page.json.next ?? '';
+  } while (after);
+  return { ...detail, items };
+}
+
 /**
  * Processed media, recorded as /admin/inbox/complete records it, with any
  * albums it names created first.
@@ -321,7 +334,7 @@ export function drift(world: ReturnType<typeof makeWorld>): string[] {
   ];
 }
 
-/** n photos in an album, with their objects in R2, and the album baked. */
+/** n photos in an album, with their objects in R2. */
 export async function seedMedia(
   world: ReturnType<typeof makeWorld>, n: number, album: string, start = 0,
 ): Promise<string[]> {
@@ -339,7 +352,5 @@ export async function seedMedia(
     for (const w of [320, 1024, 2048]) await world.bucket.put(`drv/${id}/${w}.avif`, 'd');
   }
   await addMedia(world, records);
-  const baked = await world.call('POST', '/admin/bake', { body: { album } });
-  if (baked.status !== 200) throw new Error(`bake failed: ${baked.status}`);
   return ids;
 }

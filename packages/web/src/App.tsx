@@ -189,7 +189,7 @@ function OwnerApp() {
   const activeView: FolderView = view === 'all' || view === 'loose' || folder ? view : 'all';
   const inView = useMemo(() => (items ? itemsIn(items, activeView) : null), [items, activeView]);
 
-  // An album's manifest is baked oldest first; the other order is its mirror.
+  // An album's pages come oldest first; the other order is its mirror.
   const shown = useMemo(
     () => (inView && sort === 'desc' ? [...inView].reverse() : inView), [inView, sort]);
 

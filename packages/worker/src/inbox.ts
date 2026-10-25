@@ -3,7 +3,6 @@ import { MEDIA_EXT, r2Key, type MediaRecord } from '@imagerepo/shared';
 import type { Env } from './types.js';
 import { r2s3 } from './s3.js';
 import { insertMedia, linkToAlbum } from './db.js';
-import { bakeAlbum, bakeIndex } from './manifest.js';
 
 /**
  * Browser uploads, and the processing service that turns them into media.
@@ -15,7 +14,7 @@ import { bakeAlbum, bakeIndex } from './manifest.js';
  *   service:  /heartbeat every 20s, so the app can say whether one is running
  *             /claim  → a batch under a lease
  *             strip, resize, write orig/ drv/ post/ prev/ itself
- *             /complete → media rows, album bake, inbox copy deleted
+ *             /complete → media rows, inbox copy deleted
  *             /fail     → retried after a growing wait, or given up on after MAX_ATTEMPTS
  *
  * The raw file still has its location in it, which is why it sits under
@@ -41,7 +40,7 @@ const URL_TTL = 3600;
 /** Each file can cost an R2 call or two; this keeps a request well inside Worker limits. */
 const FILES_PER_CALL = 25;
 const PARTS_PER_CALL = 100;
-/** Each record is several D1 statements, and the album is re-baked once per call. */
+/** Each record is several D1 statements and an R2 check. */
 const RECORDS_PER_CALL = 20;
 const MAX_ATTEMPTS = 5;
 /** Seconds a failed file waits before its next attempt, so a passing outage does not use them all up. */
@@ -216,13 +215,7 @@ inbox.post('/start', async (c) => {
     }
   }
 
-  if (links.length) {
-    const changed = (await db.batch(links)).some((r) => (r.meta?.changes ?? 0) > 0);
-    if (changed) {
-      await bakeAlbum(db, c.env.BUCKET, b.albumId);
-      await bakeIndex(db, c.env.BUCKET);
-    }
-  }
+  if (links.length) await db.batch(links);
   return c.json({ files: results });
 });
 
@@ -472,11 +465,6 @@ inbox.post('/complete', async (c) => {
     await insertMedia(db, accepted, { folderOf, runner });
     await db.batch(accepted.map((r) => db.prepare('DELETE FROM uploads WHERE id = ?1').bind(r.id)));
     await c.env.BUCKET.delete(accepted.map((r) => r2Key.inbox(r.id, rows.get(r.id)!.ext)));
-
-    for (const album of new Set(accepted.map((r) => r.albums[0]))) {
-      await bakeAlbum(db, c.env.BUCKET, album);
-    }
-    await bakeIndex(db, c.env.BUCKET);
   }
   return c.json({ ok: true, recorded: accepted.length, skipped });
 });

@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from './types.js';
 import { accessUserEmail } from './access.js';
-import { bakeIndex } from './manifest.js';
 
 /**
  * Empties the whole library: every row in D1 and every object the library
@@ -13,7 +12,11 @@ export const purge = new Hono<{ Bindings: Env }>({ strict: false });
 
 export const PURGE_PHRASE = 'purge everything';
 
-/** Everything the library writes lives under these. Other keys are left alone. */
+/**
+ * Everything the library writes lives under these. Other keys are left alone.
+ * man/ holds album JSON baked before reads went live (migration 011); nothing
+ * writes it now, and it goes from this list once production's copies are deleted.
+ */
 const PREFIXES = ['orig/', 'drv/', 'post/', 'prev/', 'man/', 'inbox/'];
 
 /**
@@ -73,8 +76,6 @@ purge.post('/everything', async (c) => {
   }
 
   const { deleted, done } = await deleteObjects(c.env.BUCKET, ROUNDS_PER_CALL);
-  // The index went with man/; an empty one lets the app load again.
-  if (done) await bakeIndex(c.env.DB, c.env.BUCKET);
   return c.json({ ok: true, deleted, done });
 });
 

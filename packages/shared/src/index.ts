@@ -36,7 +36,7 @@ export interface MediaRecord {
   fstop?: number;
   focalMm?: number;
 
-  // Location never reaches a guest manifest. Server-side only.
+  // Location never reaches a guest. Server-side only.
   lat?: number;
   lon?: number;
   place?: string;
@@ -74,8 +74,6 @@ export const r2Key = {
   derivative: (id: string, width: number) => `drv/${id}/${width}.avif`,
   poster: (id: string) => `post/${id}.jpg`,
   videoPreview: (id: string) => `prev/${id}.mp4`,
-  albumManifest: (albumId: string, ver: string) => `man/album/${albumId}.${ver}.json`,
-  index: (ver: string) => `man/index.${ver}.json`,
 };
 
 /** One photo or video in a listing. Deliberately terse: pages of these ship to browsers. */
@@ -103,7 +101,7 @@ export interface FolderSummary {
   coverPinned?: boolean;
   /** Guests only: the tag that lets them load the cover, which may not be on a page they have yet. */
   coverTag?: string;
-  newest: number | null;      // taken_at of the most recent item, for ordering
+  newest: number | null;      // sort date of the most recent item, for ordering
 }
 
 /** The owner's listings add location. Never serialized for share links. */
@@ -111,16 +109,6 @@ export interface OwnerMediaItem extends MediaItem {
   lat?: number;
   lon?: number;
   place?: string;
-}
-
-export interface AlbumManifest {
-  album: string;
-  title: string;
-  ver: string;
-  count: number;
-  items: MediaItem[] | OwnerMediaItem[];
-  /** Most recent first. Absent from albums baked before folders existed. */
-  folders?: FolderSummary[];
 }
 
 /** One page of a listing, in date order. `next` asks for the page after it. */

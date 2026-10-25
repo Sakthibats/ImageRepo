@@ -81,35 +81,3 @@ export function linkToAlbum(db: D1Database) {
     ON CONFLICT DO NOTHING
   `);
 }
-
-export interface AlbumRow {
-  id: string; title: string; description: string | null;
-  cover_id: string | null; created_at: number; updated_at: number;
-  manifest_ver: string | null; n: number; newest: number | null;
-}
-
-export function listAlbums(db: D1Database) {
-  // `newest` is the date of the most recent photo in the album, which is what
-  // people actually mean by "most recent album" — albums.updated_at changes on
-  // every re-bake and so sorts by nothing useful.
-  return db.prepare(`
-    SELECT a.*, COUNT(am.media_id) AS n, MAX(m.taken_at) AS newest
-    FROM albums a
-    LEFT JOIN album_media am ON am.album_id = a.id
-    LEFT JOIN media m ON m.id = am.media_id
-    GROUP BY a.id
-    ORDER BY a.title
-  `).all<AlbumRow>();
-}
-
-export function albumMedia(db: D1Database, albumId: string) {
-  return db.prepare(`
-    SELECT m.id, m.kind, m.width, m.height, m.taken_at, m.thumbhash,
-           m.duration_ms, m.caption, m.lat, m.lon, m.place, am.folder_id
-    FROM album_media am
-    JOIN media m ON m.id = am.media_id
-    WHERE am.album_id = ?1
-    ORDER BY COALESCE(m.taken_at, 0), m.id
-  `).bind(albumId).all();
-}
-

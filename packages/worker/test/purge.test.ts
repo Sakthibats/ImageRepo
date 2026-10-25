@@ -1,4 +1,4 @@
-// Purge, album delete, and manifest cleanup, against an in-memory Worker.
+// Purge, and media and album delete, against an in-memory Worker.
 import { makeWorld, seedMedia, accessJwt, check, finish } from './harness.js';
 
 const person = { jwt: await accessJwt({ email: 'owner@example.com', sub: 'u1' }) };
@@ -14,6 +14,8 @@ console.log('\npurge everything\n');
   await w.call('POST', '/admin/shares', { body: { albumId: 'trip' } });
   await w.call('POST', '/admin/tags/apply', { body: { mediaIds: ['0'.repeat(32)], add: ['beach'] } });
   await w.bucket.put('unrelated/keep-me.txt', 'not ours');
+  // Album JSON baked before reads went live.
+  await w.bucket.put('man/album/trip.owner.abc.json', '{}');
   // A browser upload waiting for the processing service.
   await w.bucket.put(`inbox/${'b'.repeat(32)}.jpg`, 'raw, with GPS');
   w.sqlite.prepare(`INSERT INTO uploads (id, kind, ext, bytes, orig_name, album_id, state, created_at, updated_at)
@@ -50,7 +52,7 @@ console.log('\npurge everything\n');
   }
   check('purge finishes over several calls', res.json.done === true && calls > 1, `${calls} calls`);
   check('each call stays small', firstCallR2 < 30, `${firstCallR2} R2 calls`);
-  check('every library object is gone', w.bucket.keys().every((k) => k.startsWith('unrelated/') || k.startsWith('man/index.')),
+  check('every library object is gone', w.bucket.keys().every((k) => k.startsWith('unrelated/')),
     w.bucket.keys().filter((k) => !k.startsWith('unrelated/')).slice(0, 5).join(', '));
   check('objects outside the library prefixes are kept', w.bucket.objects.has('unrelated/keep-me.txt'));
   check('the count of deleted objects adds up', deleted >= 1230 * 4, String(deleted));
@@ -61,8 +63,8 @@ console.log('\npurge everything\n');
   const left = tables.filter((t) => (w.sqlite.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as any).n > 0);
   check('every table is empty', left.length === 0, left.join(', '));
 
-  const index = await w.call('GET', '/a/manifest/index');
-  check('the app loads an empty index afterwards', index.status === 200 && index.json.albums.length === 0);
+  const index = await w.call('GET', '/a/albums');
+  check('the app loads an empty album list afterwards', index.status === 200 && index.json.albums.length === 0);
 
   const album = await w.call('POST', '/admin/albums', { body: { title: 'New' } });
   const again = await w.call('POST', '/admin/inbox/start', {
@@ -90,26 +92,8 @@ console.log('\ndeleting media and albums\n');
   check('a photo moved to another album survives', w.bucket.objects.has(`orig/${trip[0]}.jpg`) &&
     Boolean(w.sqlite.prepare('SELECT 1 FROM media WHERE id = ?').get(trip[0])));
   check('the rest of the album is gone from R2', !w.bucket.objects.has(`orig/${trip[1]}.jpg`));
-  check('the deleted album has no manifests left', w.bucket.keys('man/album/trip.').length === 0,
-    w.bucket.keys('man/album/trip.').join(', '));
-  check('the other album is intact', w.bucket.keys('man/album/kids.').length > 0 &&
-    w.bucket.objects.has(`orig/${kids[0]}.jpg`));
-}
-
-console.log('\nmanifest cleanup\n');
-{
-  const w = makeWorld();
-  await seedMedia(w, 3, 'trip');
-  for (let i = 0; i < 5; i++) await w.call('POST', '/admin/bake', { body: { album: 'trip' } });
-  const vers = new Set(w.bucket.keys('man/album/trip.').map((k) => k.split('.')[2]));
-  check('only the current and previous versions are kept', vers.size === 2 && w.bucket.keys('man/album/trip.').length === 4,
-    w.bucket.keys('man/album/trip.').join(', '));
-
-  await w.bucket.put('man/album/gone.owner.abc.json', '{}');
-  await w.bucket.put('man/album/gone.abc.json', '{}');
-  await w.call('POST', '/admin/bake', { body: {} });
-  check('a full bake sweeps manifests of albums that no longer exist', w.bucket.keys('man/album/gone.').length === 0);
-  check('and keeps live ones', w.bucket.keys('man/album/trip.').length === 4);
+  check('the other album is intact', w.bucket.objects.has(`orig/${kids[0]}.jpg`) &&
+    (await w.call('GET', '/a/albums/kids')).json.n === 6);
 }
 
 finish();

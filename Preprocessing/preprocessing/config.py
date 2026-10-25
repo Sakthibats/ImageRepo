@@ -25,8 +25,8 @@ class Config:
     kinds: tuple[str, ...]
     photo_tz: str
     poll_seconds: float = 5.0
-    # Records go to the Worker in batches, and each batch re-bakes the album.
-    # This caps how long a finished photo waits to appear.
+    # Records go to the Worker in batches. This caps how long a finished photo
+    # waits to be recorded.
     flush_seconds: float = 5.0
 
 

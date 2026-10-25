@@ -1,8 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from './types.js';
 import { requireAdmin } from './auth.js';
-import { listAlbums } from './db.js';
-import { bakeAlbum, bakeIndex, sweepManifests } from './manifest.js';
 import { mutations } from './mutations.js';
 import { inbox } from './inbox.js';
 import { tagWrites } from './tags.js';
@@ -23,31 +21,6 @@ admin.get('/health', async (c) => {
   // Prove both bindings actually work, not just that the Worker is up.
   const db = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM media').first<{ n: number }>();
   return c.json({ ok: true, media: db?.n ?? 0, time: Date.now() });
-});
-
-admin.post('/bake', async (c) => {
-  const body = await c.req.json<{ album?: string }>().catch(() => ({} as { album?: string }));
-  const baked: { album: string; ver: string; count: number }[] = [];
-
-  if (body.album) {
-    const r = await bakeAlbum(c.env.DB, c.env.BUCKET, body.album);
-    baked.push({ album: body.album, ...r });
-  } else {
-    const { results } = await listAlbums(c.env.DB);
-    for (const a of results as any[]) {
-      const r = await bakeAlbum(c.env.DB, c.env.BUCKET, a.id);
-      baked.push({ album: a.id, ...r });
-    }
-    // A full bake is also when leftovers from deleted albums are cleared.
-    await sweepManifests(c.env.BUCKET, (results as any[]).map((a) => a.id));
-  }
-  const albums = await bakeIndex(c.env.DB, c.env.BUCKET);
-  return c.json({ ok: true, baked, albums });
-});
-
-admin.get('/albums', async (c) => {
-  const { results } = await listAlbums(c.env.DB);
-  return c.json({ albums: results });
 });
 
 // ------------------------------------------------------------------- shares

@@ -19,8 +19,9 @@ assets.use('*', async (c, next) => {
   await next();
 });
 
-// Tags are owner-only reads behind the same viewer check. Registered before
-// the wildcard for the same reason as the routes below.
+// Owner-only reads behind the same viewer check. Registered BEFORE
+// /:id/:variant: Hono matches in declaration order, and the wildcard would
+// otherwise swallow "tags" or "albums" as an id.
 assets.route('/tags', tagReads);
 
 // Read live from D1 on every request, so nothing may cache them.
@@ -58,30 +59,6 @@ assets.get('/media', async (c) => {
     order: q('order') === 'desc' ? 'desc' : 'asc', after: q('after'), limit: Number(q('limit')) || PAGE_MAX,
   });
   return c.json(page, 200, LIVE);
-});
-
-// Registered BEFORE /:id/:variant: Hono matches in declaration order, and
-// the wildcard would otherwise swallow "manifest" as an id.
-/** Manifests and the album index, gated by the same viewer check. */
-assets.get('/manifest/index', async (c) => {
-  const obj = await c.env.BUCKET.get('man/index.owner.current.json');
-  if (!obj) return c.json({ error: 'not baked yet' }, 404);
-  return new Response(obj.body, {
-    // The index is the mutable pointer to everything else, and the app
-    // re-reads it straight after each edit. Any freshness lifetime here makes
-    // the browser answer that re-read from its cache, so a rename or a new
-    // album appears not to have happened.
-    headers: { 'content-type': 'application/json', 'cache-control': 'private, no-cache' },
-  });
-});
-
-assets.get('/manifest/album/:album/:ver', async (c) => {
-  const key = `man/album/${c.req.param('album')}.owner.${c.req.param('ver')}.json`;
-  const obj = await c.env.BUCKET.get(key);
-  if (!obj) return c.json({ error: 'not found' }, 404);
-  return new Response(obj.body, {
-    headers: { 'content-type': 'application/json', 'cache-control': IMMUTABLE },
-  });
 });
 
 /**
