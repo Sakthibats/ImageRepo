@@ -1,4 +1,4 @@
-import type { AlbumManifest, FolderSummary, OwnerManifestItem } from '@imagerepo/shared';
+import type { AlbumManifest, FolderSummary, MediaItem, MediaPage, OwnerMediaItem } from '@imagerepo/shared';
 
 export interface AlbumSummary {
   id: string; title: string; n: number;
@@ -22,7 +22,56 @@ export const fetchIndex = () =>
   get<{ ver: string; albums: AlbumSummary[] }>('/a/manifest/index');
 
 export const fetchAlbum = (id: string, ver: string) =>
-  get<AlbumManifest & { items: OwnerManifestItem[]; folders?: FolderSummary[] }>(`/a/manifest/album/${id}/${ver}`);
+  get<AlbumManifest & { items: OwnerMediaItem[]; folders?: FolderSummary[] }>(`/a/manifest/album/${id}/${ver}`);
+
+/** What /a/media lists: the library, an album or one of its folders ('loose' for none), or photos with tags. */
+export type Listing =
+  | { album: string; folder?: string }
+  | { tags: string[]; match: 'all' | 'any' }
+  | Record<string, never>;
+
+/** One page of a listing. `after` is the previous page's `next`. */
+export function fetchPage(
+  listing: Listing, o: { order?: 'asc' | 'desc'; after?: string; limit?: number } = {},
+): Promise<MediaPage<OwnerMediaItem>> {
+  const q = new URLSearchParams();
+  if ('album' in listing) {
+    q.set('album', listing.album);
+    if (listing.folder) q.set('folder', listing.folder);
+  } else if ('tags' in listing) {
+    q.set('tags', listing.tags.join(','));
+    q.set('match', listing.match);
+  }
+  if (o.order) q.set('order', o.order);
+  if (o.after) q.set('after', o.after);
+  if (o.limit) q.set('limit', String(o.limit));
+  return get(`/a/media?${q}`);
+}
+
+/** Small, so the first photos show before the rest of the album has arrived. */
+const FIRST_PAGE = 150;
+
+/**
+ * Every page of a listing, one after another, handing the items so far to
+ * `onItems` as each page arrives. Stops early, returning null, once `live()`
+ * is false: the viewer has moved on.
+ */
+export async function loadAll<T extends MediaItem>(
+  page: (after: string | undefined, limit: number) => Promise<MediaPage<T>>,
+  onItems: (items: T[]) => void,
+  live: () => boolean,
+): Promise<T[] | null> {
+  let items: T[] = [];
+  let after: string | undefined;
+  do {
+    const p = await page(after, items.length ? 500 : FIRST_PAGE);
+    if (!live()) return null;
+    items = [...items, ...p.items];
+    onItems(items);
+    after = p.next ?? undefined;
+  } while (after);
+  return items;
+}
 
 export const assetUrl = (id: string, variant: string) => `/a/${id}/${variant}`;
 

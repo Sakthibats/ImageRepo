@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from './types.js';
-import type { ManifestItem } from '@imagerepo/shared';
+import type { MediaItem } from '@imagerepo/shared';
 import {
   lookupShare, verifyPasscode, signSession, verifySession, assetTag, verifyAssetTag,
   IN_SCOPE, FOLDER_IN_SCOPE,
@@ -84,7 +84,7 @@ async function buildGuestManifest(env: Env, tokenHash: string, albumId: string, 
 
   // Queried column-by-column rather than SELECT *, so lat/lon/place cannot
   // reach a guest even by accident.
-  const items: (ManifestItem & { t2: string })[] = [];
+  const items: (MediaItem & { t2: string })[] = [];
   for (const r of results as any[]) {
     items.push({
       id: r.id,

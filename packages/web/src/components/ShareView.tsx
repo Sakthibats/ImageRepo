@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { OwnerManifestItem } from '@imagerepo/shared';
+import type { OwnerMediaItem } from '@imagerepo/shared';
 import { openShareSession, guestAssetUrl, type GuestAlbum, type GuestItem } from '../share.ts';
 import { PhotoGrid } from './PhotoGrid.tsx';
 import { Lightbox } from './Lightbox.tsx';
@@ -116,7 +116,7 @@ export function ShareView({ token }: { token: string }) {
 
       {lightbox !== null && (
         <Lightbox
-          items={shown as unknown as OwnerManifestItem[]}
+          items={shown as unknown as OwnerMediaItem[]}
           index={lightbox}
           onClose={() => setLightbox(null)}
           onIndex={setLightbox}

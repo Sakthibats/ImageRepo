@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ManifestItem } from '@imagerepo/shared';
-import { assetUrl } from '../api.ts';
-import { tagsApi, groupByMonth, type Item, type SortOrder } from '../tags.ts';
+import type { OwnerMediaItem } from '@imagerepo/shared';
+import { assetUrl, fetchPage } from '../api.ts';
+import { groupByMonth, type SortOrder } from '../tags.ts';
 import { PhotoGrid } from './PhotoGrid.tsx';
 
 /**
@@ -15,12 +15,12 @@ export function TimelineView({
 }: {
   /** Changing this starts over: the parent keys this component on it. */
   order: SortOrder;
-  onOpen: (items: Item[], index: number) => void;
+  onOpen: (items: OwnerMediaItem[], index: number) => void;
   selection: Set<string>;
   onToggle: (id: string, index: number, shiftKey: boolean) => void;
-  onItems: (items: Item[]) => void;
+  onItems: (items: OwnerMediaItem[]) => void;
 }) {
-  const [items, setItems] = useState<Item[]>([]);
+  const [items, setItems] = useState<OwnerMediaItem[]>([]);
   const [next, setNext] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -31,7 +31,7 @@ export function TimelineView({
     if (loadingRef.current) return;
     loadingRef.current = true;
     try {
-      const page = await tagsApi.timeline(order, after);
+      const page = await fetchPage({}, { order, after });
       setItems((prev) => {
         const merged = after ? [...prev, ...page.items] : page.items;
         onItems(merged);
@@ -81,7 +81,7 @@ export function TimelineView({
               <span className="tl-count">{g.items.length}</span>
             </h2>
             <PhotoGrid
-              items={g.items as unknown as ManifestItem[]}
+              items={g.items}
               onOpen={(i) => onOpen(items, base + i)}
               urlFor={(it, v) => assetUrl(it.id, v)}
               selection={selection}

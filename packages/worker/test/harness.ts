@@ -41,6 +41,18 @@ function positional(sql: string, args: unknown[]): { sql: string; args: unknown[
   return { sql: text, args: out };
 }
 
+/** Every statement run, newest last, so a test can ask SQLite how it ran one. */
+const queries: { sql: string; args: unknown[] }[] = [];
+
+/** SQLite's plan for the latest statement matching `like`, as one line per step. */
+export function planOf(world: { sqlite: Database.Database }, like: RegExp): string {
+  const q = [...queries].reverse().find((x) => like.test(x.sql));
+  if (!q) throw new Error(`no query matching ${like}`);
+  const p = positional(q.sql, q.args);
+  return (world.sqlite.prepare(`EXPLAIN QUERY PLAN ${p.sql}`).all(...p.args) as { detail: string }[])
+    .map((r) => r.detail).join('\n');
+}
+
 class Stmt {
   constructor(private db: Database.Database, private sql: string, private args: unknown[] = []) {}
   bind(...args: unknown[]) { return new Stmt(this.db, this.sql, args); }
@@ -51,6 +63,7 @@ class Stmt {
   }
 
   exec() {
+    queries.push({ sql: this.sql, args: this.args });
     const { s, args } = this.prepared();
     if (s.reader) return { results: s.all(...args), success: true, meta: { changes: 0 } };
     const r = s.run(...args);

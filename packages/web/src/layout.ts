@@ -1,7 +1,7 @@
-import type { ManifestItem } from '@imagerepo/shared';
+import type { MediaItem } from '@imagerepo/shared';
 
 export interface LaidOutItem {
-  item: ManifestItem;
+  item: MediaItem;
   width: number;
   height: number;
   left: number;
@@ -22,13 +22,13 @@ export interface Row {
  * 13,000 photos scroll smoothly — only visible rows are ever rendered.
  */
 export function justify(
-  items: ManifestItem[],
+  items: MediaItem[],
   containerWidth: number,
   targetHeight = 276,
   gap = 6,
 ): { rows: Row[]; totalHeight: number } {
   const rows: Row[] = [];
-  let run: ManifestItem[] = [];
+  let run: MediaItem[] = [];
   let runRatio = 0;
   let top = 0;
 
@@ -65,7 +65,7 @@ export function justify(
   return { rows, totalHeight: Math.max(0, top - gap) };
 }
 
-function aspect(it: ManifestItem): number {
+function aspect(it: MediaItem): number {
   const w = it.w || 1;
   const h = it.h || 1;
   const r = w / h;

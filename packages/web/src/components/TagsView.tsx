@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { SortOrder } from '../tags.ts';
-import type { ManifestItem } from '@imagerepo/shared';
-import { assetUrl } from '../api.ts';
-import { tagsApi, type Item, type Tag } from '../tags.ts';
+import type { OwnerMediaItem } from '@imagerepo/shared';
+import { assetUrl, fetchPage, loadAll } from '../api.ts';
+import { tagsApi, type Tag } from '../tags.ts';
 import { PhotoGrid } from './PhotoGrid.tsx';
 import { TagChip } from './TagChip.tsx';
 
@@ -11,15 +11,15 @@ export function TagsView({
   order, onOpen, selection, onToggle, onItems,
 }: {
   order: SortOrder;
-  onOpen: (items: Item[], index: number) => void;
+  onOpen: (items: OwnerMediaItem[], index: number) => void;
   selection: Set<string>;
   onToggle: (id: string, index: number, shiftKey: boolean) => void;
-  onItems: (items: Item[]) => void;
+  onItems: (items: OwnerMediaItem[]) => void;
 }) {
   const [tags, setTags] = useState<Tag[] | null>(null);
   const [active, setActive] = useState<string[]>([]);
   const [mode, setMode] = useState<'all' | 'any'>('all');
-  const [results, setResults] = useState<Item[] | null>(null);
+  const [results, setResults] = useState<OwnerMediaItem[] | null>(null);
   const [filter, setFilter] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -30,14 +30,12 @@ export function TagsView({
   useEffect(() => {
     if (!active.length) { setResults(null); onItems([]); return; }
     let live = true;
-    void tagsApi.search(active, mode)
-      .then((d) => {
-        if (!live) return;
-        // The search returns newest first.
-        const items = order === 'asc' ? [...d.items].reverse() : d.items;
-        setResults(items); onItems(items);
-      })
-      .catch((e) => setError(e.message));
+    setResults(null);
+    void loadAll(
+      (after, limit) => fetchPage({ tags: active, match: mode }, { order, after, limit }),
+      (items) => { setResults(items); onItems(items); },
+      () => live,
+    ).catch((e) => setError(e.message));
     return () => { live = false; };
   }, [active, mode, order, onItems]);
 
@@ -104,7 +102,7 @@ export function TagsView({
             {results.length} {results.length === 1 ? 'item' : 'items'}
           </p>
           <PhotoGrid
-            items={results as unknown as ManifestItem[]}
+            items={results}
             onOpen={(i) => onOpen(results, i)}
             urlFor={(it, v) => assetUrl(it.id, v)}
             selection={selection}

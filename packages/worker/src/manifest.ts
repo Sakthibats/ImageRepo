@@ -1,5 +1,5 @@
 import { r2Key } from '@imagerepo/shared';
-import type { AlbumManifest, FolderSummary, ManifestItem, OwnerManifestItem } from '@imagerepo/shared';
+import type { AlbumManifest, FolderSummary, MediaItem, OwnerMediaItem } from '@imagerepo/shared';
 import { albumMedia, listAlbums } from './db.js';
 
 /**
@@ -24,8 +24,8 @@ export const manifestKey = (albumId: string, audience: Audience, ver: string) =>
 export const indexKey = (audience: Audience, ver: string) =>
   `man/index.${audience}.${ver}.json`;
 
-function toGuestItem(row: any): ManifestItem {
-  const item: ManifestItem = {
+function toGuestItem(row: any): MediaItem {
+  const item: MediaItem = {
     id: row.id,
     k: row.kind,
     w: row.width ?? 0,
@@ -39,8 +39,8 @@ function toGuestItem(row: any): ManifestItem {
   return item;
 }
 
-function toOwnerItem(row: any): OwnerManifestItem {
-  const item = toGuestItem(row) as OwnerManifestItem;
+function toOwnerItem(row: any): OwnerMediaItem {
+  const item = toGuestItem(row) as OwnerMediaItem;
   if (row.lat != null) item.lat = row.lat;
   if (row.lon != null) item.lon = row.lon;
   if (row.place) item.place = row.place;
@@ -107,7 +107,7 @@ export async function bakeAlbum(
   ).bind(albumId).all<FolderRow>();
   const ver = newVersion();
 
-  const write = async (audience: Audience, items: ManifestItem[], folders?: FolderSummary[]) => {
+  const write = async (audience: Audience, items: MediaItem[], folders?: FolderSummary[]) => {
     const body: AlbumManifest = {
       album: album.id, title: album.title, ver, count: items.length, items,
       ...(folders ? { folders } : {}),

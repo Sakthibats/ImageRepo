@@ -1,7 +1,9 @@
 import { Hono } from 'hono';
 import type { Env, Viewer } from './types.js';
 import { resolveViewer } from './access.js';
-import { tagReads } from './tags.js';
+import type { AlbumDetail } from '@imagerepo/shared';
+import { slugTag, tagReads } from './tags.js';
+import { albumSummaries, folderSummaries, listMedia, PAGE_MAX, type Scope } from './listing.js';
 
 export const assets = new Hono<{ Bindings: Env; Variables: { viewer: Viewer } }>({ strict: false });
 
@@ -17,9 +19,46 @@ assets.use('*', async (c, next) => {
   await next();
 });
 
-// Tags, timeline and search are owner-only reads behind the same viewer
-// check. Registered before the wildcard for the same reason as manifests.
+// Tags are owner-only reads behind the same viewer check. Registered before
+// the wildcard for the same reason as the routes below.
 assets.route('/tags', tagReads);
+
+// Read live from D1 on every request, so nothing may cache them.
+const LIVE = { 'cache-control': 'private, no-store' };
+
+/** Every album with its count and cover. A few rows per album. */
+assets.get('/albums', async (c) => c.json({ albums: await albumSummaries(c.env.DB) }, 200, LIVE));
+
+/** One album with its folders, and how many photos are in none. */
+assets.get('/albums/:id', async (c) => {
+  const [album] = await albumSummaries(c.env.DB, c.req.param('id'));
+  if (!album) return c.json({ error: 'no such album' }, 404);
+  const folders = await folderSummaries(c.env.DB, { album: album.id });
+  const loose = album.n - folders.reduce((n, f) => n + f.n, 0);
+  return c.json({ ...album, loose, folders } satisfies AlbumDetail, 200, LIVE);
+});
+
+/**
+ * A page of the library, an album, a folder (`folder=<id>`, or `loose`), or
+ * the photos carrying tags (`tags=a,b`, `match=any` for either rather than
+ * both). Oldest first unless `order=desc`; `after` is the previous page's `next`.
+ */
+assets.get('/media', async (c) => {
+  const q = (k: string) => c.req.query(k);
+  const album = q('album');
+  const folder = q('folder');
+  const tags = [...new Set((q('tags') ?? '').split(',').map(slugTag).filter(Boolean))].slice(0, 20);
+  if (folder && folder !== 'loose' && !/^[0-9a-f]{12}$/.test(folder)) return c.json({ error: 'bad folder' }, 400);
+
+  const scope: Scope = album
+    ? { by: 'album', album, folder: folder === 'loose' ? null : folder }
+    : tags.length ? { by: 'tags', tags, match: q('match') === 'any' ? 'any' : 'all' }
+    : { by: 'library' };
+  const page = await listMedia(c.env.DB, scope, 'owner', {
+    order: q('order') === 'desc' ? 'desc' : 'asc', after: q('after'), limit: Number(q('limit')) || PAGE_MAX,
+  });
+  return c.json(page, 200, LIVE);
+});
 
 // Registered BEFORE /:id/:variant: Hono matches in declaration order, and
 // the wildcard would otherwise swallow "manifest" as an id.

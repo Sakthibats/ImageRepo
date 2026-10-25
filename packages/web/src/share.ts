@@ -1,6 +1,6 @@
-import type { FolderSummary, ManifestItem } from '@imagerepo/shared';
+import type { FolderSummary, MediaItem } from '@imagerepo/shared';
 
-export type GuestItem = ManifestItem & { t2: string };
+export type GuestItem = MediaItem & { t2: string };
 
 export interface GuestAlbum {
   album: string; title: string; count: number;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { FolderSummary, OwnerManifestItem } from '@imagerepo/shared';
+import type { FolderSummary, OwnerMediaItem } from '@imagerepo/shared';
 import { fetchIndex, fetchAlbum, assetUrl, type AlbumSummary } from './api.ts';
 import { adminApi } from './admin.ts';
 import { PhotoGrid } from './components/PhotoGrid.tsx';
@@ -15,7 +15,7 @@ import { TagDialog } from './components/TagDialog.tsx';
 import { SettingsView } from './components/SettingsView.tsx';
 import { FolderStrip, itemsIn, type FolderView } from './components/FolderStrip.tsx';
 import { shareTokenFromPath } from './share.ts';
-import { loadSort, saveSort, type Item, type SortOrder } from './tags.ts';
+import { loadSort, saveSort, type SortOrder } from './tags.ts';
 
 /** Settings has no tab of its own: it is reached from the gear, not a lens on the library. */
 type Tab = 'photos' | 'albums' | 'tags' | 'settings';
@@ -66,13 +66,13 @@ function OwnerApp() {
   // Dates are the default way in; albums and tags are alternative lenses on
   // the same library rather than separate places things live.
   const [tab, setTab] = useState<Tab>('photos');
-  const [viewItems, setViewItems] = useState<Item[]>([]);
-  const [globalLb, setGlobalLb] = useState<{ items: Item[]; index: number } | null>(null);
+  const [viewItems, setViewItems] = useState<OwnerMediaItem[]>([]);
+  const [globalLb, setGlobalLb] = useState<{ items: OwnerMediaItem[]; index: number } | null>(null);
   const [tagOpen, setTagOpen] = useState(false);
   const [albums, setAlbums] = useState<AlbumSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<AlbumSummary | null>(null);
-  const [items, setItems] = useState<OwnerManifestItem[] | null>(null);
+  const [items, setItems] = useState<OwnerMediaItem[] | null>(null);
   const [folders, setFolders] = useState<FolderSummary[]>([]);
   const [view, setView] = useState<FolderView>('all');
   const [lightbox, setLightbox] = useState<number | null>(null);
@@ -302,7 +302,7 @@ function OwnerApp() {
 
         {globalLb && (
           <Lightbox
-            items={globalLb.items as unknown as OwnerManifestItem[]}
+            items={globalLb.items}
             index={globalLb.index}
             onClose={() => setGlobalLb(null)}
             onIndex={(i) => setGlobalLb({ ...globalLb, index: i })}

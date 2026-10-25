@@ -1,17 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ManifestItem } from '@imagerepo/shared';
+import type { MediaItem } from '@imagerepo/shared';
 import { justify } from '../layout.ts';
 import { pickWidth } from '../api.ts';
 import { thumbhashUrl } from '../thumbhash.ts';
 
 const OVERSCAN = 800;   // px of off-screen rows to keep mounted
 
-export type UrlFor = (item: ManifestItem, variant: string) => string;
+export type UrlFor = (item: MediaItem, variant: string) => string;
 
 export function PhotoGrid({
   items, onOpen, urlFor, selection, onToggle,
 }: {
-  items: ManifestItem[];
+  items: MediaItem[];
   onOpen: (index: number) => void;
   urlFor: UrlFor;
   /** Present only in admin mode; guests never receive these. */
@@ -94,7 +94,7 @@ function Tile({
   item, width, height, left, top, onClick, urlFor,
   index, selected, selectable, onToggle,
 }: {
-  item: ManifestItem; width: number; height: number;
+  item: MediaItem; width: number; height: number;
   left: number; top: number; onClick: () => void; urlFor: UrlFor;
   index: number; selected: boolean; selectable: boolean;
   onToggle?: (id: string, index: number, shiftKey: boolean) => void;

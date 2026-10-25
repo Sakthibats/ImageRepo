@@ -1,12 +1,12 @@
 import { useEffect, useRef } from 'react';
-import type { OwnerManifestItem } from '@imagerepo/shared';
+import type { OwnerMediaItem } from '@imagerepo/shared';
 import type { UrlFor } from './PhotoGrid.tsx';
 import { thumbhashUrl } from '../thumbhash.ts';
 
 export function Lightbox({
   items, index, onClose, onIndex, urlFor, allowDownload = true,
 }: {
-  items: OwnerManifestItem[];
+  items: OwnerMediaItem[];
   index: number;
   onClose: () => void;
   onIndex: (i: number) => void;

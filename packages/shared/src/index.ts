@@ -78,8 +78,8 @@ export const r2Key = {
   index: (ver: string) => `man/index.${ver}.json`,
 };
 
-/** An entry inside a baked album manifest. Deliberately terse — this ships to browsers. */
-export interface ManifestItem {
+/** One photo or video in a listing. Deliberately terse: pages of these ship to browsers. */
+export interface MediaItem {
   id: string;
   k: MediaKind;
   w: number;
@@ -89,7 +89,7 @@ export interface ManifestItem {
   d?: number;                 // durationMs, video only
   c?: string;                 // caption
   f?: string;                 // folder id; absent = loose in the album
-  // NOTE: no lat/lon/place here. Owner manifests add them via OwnerManifestItem.
+  // NOTE: no lat/lon/place here. The owner's listings add them via OwnerMediaItem.
 }
 
 /** A folder inside an album, as the app lists it. */
@@ -104,8 +104,8 @@ export interface FolderSummary {
   newest: number | null;      // taken_at of the most recent item, for ordering
 }
 
-/** Owner-only manifest adds location. Never serialized for share links. */
-export interface OwnerManifestItem extends ManifestItem {
+/** The owner's listings add location. Never serialized for share links. */
+export interface OwnerMediaItem extends MediaItem {
   lat?: number;
   lon?: number;
   place?: string;
@@ -116,7 +116,29 @@ export interface AlbumManifest {
   title: string;
   ver: string;
   count: number;
-  items: ManifestItem[] | OwnerManifestItem[];
+  items: MediaItem[] | OwnerMediaItem[];
   /** Most recent first. Absent from albums baked before folders existed. */
   folders?: FolderSummary[];
+}
+
+/** One page of a listing, in date order. `next` asks for the page after it. */
+export interface MediaPage<T extends MediaItem = MediaItem> {
+  items: T[];
+  next: string | null;
+}
+
+/** An album as the album list shows it. */
+export interface AlbumSummary {
+  id: string;
+  title: string;
+  n: number;
+  /** The chosen cover, or the album's earliest photo. */
+  cover: string | null;
+  newest: number | null;      // sort date of the most recent item, for ordering
+}
+
+/** An open album: its folders, and how many photos sit in none. */
+export interface AlbumDetail extends AlbumSummary {
+  loose: number;
+  folders: FolderSummary[];
 }
