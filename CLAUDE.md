@@ -151,7 +151,8 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 - The library holds 13 items (12 photos, 1 video) in one album. D1 use is
   small: about 50k rows read and 2k written a day, mostly the service polling.
 - The service runs on the laptop (`python -m preprocessing run`); not hosted.
-  The Docker image has never been built.
+  The Docker image is built and tested (arm64 and amd64, the suite passes
+  inside it, `doctor` passes against production).
 - Verified end to end: photos from laptop and iPhone; the service's online and
   offline status. Not yet: real iPhone video (HEVC/HDR, whether the picker
   converts it), a run of ~1,000 files.
@@ -167,8 +168,11 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
    decide R2 storage: 10 GB is free, 100k photos is roughly 300–500 GB
    (about $5–7 a month). Only if the numbers say so: album pages on scroll
    (web only, same API), version-keyed browser caching, exact upload counts.
-2. Host the service for a weeks-long upload: an always-on box from the Docker
-   image. Cloudflare Containers needs the paid Workers plan.
+2. Host the service for a weeks-long upload: an always-on box running the
+   Docker image. On the free plan, D1's writes cap the pace, not CPU, so a
+   small box is enough (2 vCPUs process a day's quota in an hour or two).
+   Cloudflare Containers needs the paid Workers plan and bills an always-on
+   poller around the clock.
 3. Faces (detect + embed from the 1024px copy, local model, owner-only), then
    objects. Agreed shape, not built: everything is a tag. `tags.kind` (yours,
    person, object), `media_tags.source` (owner or model@version) and `score`;

@@ -1,7 +1,17 @@
 services:
   preprocessing:
     build: .
+    image: imagerepo-preprocessing
+    # Settings, secrets included, from this machine's own .env (see env.example).
+    # Give each machine its own RUNNER_NAME, so the app says which one is running.
     env_file: .env
     restart: unless-stopped
+    # Signals reach the service through a real init, and ffmpeg's children are reaped.
+    init: true
     # Stopping waits for the files in hand to finish (SIGTERM, then this long).
+    # A file cut off is not lost: its claim lapses and it goes back in the queue.
     stop_grace_period: 2m
+    # A service left running for months must not fill the disk with logs.
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: '3' }

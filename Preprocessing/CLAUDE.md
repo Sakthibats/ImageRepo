@@ -22,7 +22,9 @@ api.py / r2.py   Worker client (Access service token) / boto3 against R2
 python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/pytest -q          # ~15s; needs ffmpeg for the video tests
 .venv/bin/python -m preprocessing doctor
-docker compose up --build -d # never built yet
+docker build --target test . # the test suite inside the image (~2 min)
+docker compose run --rm preprocessing doctor
+docker compose up --build -d # as a service; give its .env its own RUNNER_NAME
 ```
 
 ## Things to know
@@ -32,6 +34,10 @@ docker compose up --build -d # never built yet
   no offset (the owner is in Asia/Singapore), `CONCURRENCY` defaults to cores.
 - libvips (`pyvips[binary]`) and libheif (`pillow-heif`) are wheels; nothing to
   install but ffmpeg. HEIC is decoded by pillow-heif, not vips (no HEVC there).
+- The image is Debian trixie (ffmpeg 7.1): bookworm's 5.1 lacks options the
+  video tests use. Built and tested on arm64 and amd64. On 2 vCPUs (M-series,
+  in Docker): ~0.55s per 12MP photo two at a time, ~6,500 an hour; an HEVC
+  preview takes 0.5–0.9s per second of video (libx264, no VideoToolbox).
 - vips runs one thread per image (`concurrency_set(1)`); parallelism is the
   runner's thread pool. AVIF: effort 2, 4:4:4, `keep='none'` (no metadata out).
 - Videos: a quarter of the slots, claimed before photos, 4h lease (photos 15m).
