@@ -117,42 +117,46 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 - The laptop CLI (`packages/ingest`) was removed on 25 Oct 2026; git history has
   it. Its outputs are the reference for the service's parity tests.
 
-## Current state (25 October 2026)
+## Current state (26 October 2026)
 
-- Work happens on `main`. `cli-stages` is merged into it and can be deleted.
-  `main` is unpushed: `origin/main` is still PR #1's merge (`2eb7376`).
-  Production runs `e02131a` (one album per photo, the album backlog line,
-  per-album counts, Retry without re-upload), checked in a browser; migrations
-  001–010 applied. Not yet deployed: the 7-day inbox fixes (a gone upload fails
-  at once, `/start` re-sends it, retries back off 1m/5m/30m/2h in
-  `lease_until`), and live reads (migration 011, `listMedia`, no more baking).
-  R2 CORS and the `inbox/` lifecycle rule are set.
-- The CLI is gone, and so are its routes and D1 tables (`ingest_log`,
-  `settings`). Every remaining table is in use.
-- The library was purged and is being re-added through the browser. The
-  service runs on the laptop (`python -m preprocessing run`); not hosted yet.
+- Work happens on `main`, pushed; `origin/main` is `ba4f011`. `cli-stages` is
+  merged and can be deleted (locally and on origin).
+- Production runs `ba4f011`, deployed 25 Oct; migrations 001–011 applied. In
+  it: live reads (`listMedia`, no baking), the 7-day inbox fixes (a gone
+  upload fails at once, `/start` re-sends it, retries back off 1m/5m/30m/2h),
+  the uploader queueing its first files as soon as they are hashed, and the
+  backlog line saying "retrying in N min" for a file backing off. The owner
+  checked it in a browser. R2 CORS and the `inbox/` lifecycle rule are set.
+- Left over from baking: `man/` objects in R2, `man/` in `PREFIXES`, and the
+  unused columns `albums.manifest_ver` and `album_media.position`.
+- The library holds 10 items (9 photos, 1 video) in one album. D1 use is small:
+  about 40k rows read and 1.5k written a day, mostly the service polling.
+- The service runs on the laptop (`python -m preprocessing run`); not hosted.
+  The Docker image has never been built.
 - Verified end to end: photos from laptop and iPhone; the service's online and
-  offline status (in the uploader, before it moved to the backlog line). Not
-  yet: real iPhone video (HEVC/HDR, whether the picker converts it), the
-  Docker image (never built), hosting.
+  offline status. Not yet: real iPhone video (HEVC/HDR, whether the picker
+  converts it), a run of ~1,000 files.
 - The owner plans to add 100k+ photos from laptop and disk, through the
   browser only (no Google Photos import), into albums with one level of
-  folders (e.g. Wedding → ROM, Religious, Group shots).
+  folders (e.g. Wedding → ROM, Religious, Group shots), staying on the free plan.
 
 ## Planned next
 
-0. Push `main`; deploy (stop the service first). Then, once the app checks
-   out: delete the `man/` objects in R2, take `man/` out of `PREFIXES`, and a
-   migration 012 drops `albums.manifest_ver` and `album_media.position`.
-1. Before the bulk upload, measure ~1,000 files: D1 rows read and written per
-   photo, CPU per request. That sets the daily pace on the free plan. Only if
-   the numbers say so: load album pages on scroll (web only, same API),
-   version-keyed browser caching, exact upload counts by trigger.
+0. Finish the baking cleanup: delete `man/` in R2, take `man/` out of
+   `PREFIXES` (and `purge.test.ts`), and migration 012 drops
+   `albums.manifest_ver` and `album_media.position`.
+1. Before the bulk upload, a run of ~1,000 files including real iPhone video:
+   D1 rows read and written per photo, CPU per request, service throughput.
+   That sets the daily pace on the free plan (100k rows written a day). Also
+   decide R2 storage: 10 GB is free, 100k photos is roughly 300–500 GB
+   (about $5–7 a month). Only if the numbers say so: album pages on scroll
+   (web only, same API), version-keyed browser caching, exact upload counts.
 2. A backlog mode in the service: claim `/admin/stages/claim` work so a stage
    version bump or a new stage re-processes existing media from `orig/`.
    Stripped JPEGs in `orig/` have lost their EXIF orientation: take it from
    `raw_meta.Orientation`, or rotated photos come out sideways.
-3. Host the service (Docker image exists; any always-on box or Cloudflare Containers).
+3. Host the service for a weeks-long upload: an always-on box from the Docker
+   image. Cloudflare Containers needs the paid Workers plan.
 4. Faces (detect + embed from the 1024px copy, local model, owner-only), then
    objects. Agreed shape, not built: everything is a tag. `tags.kind` (yours,
    person, object), `media_tags.source` (owner or model@version) and `score`;
