@@ -205,6 +205,10 @@ console.log('\nprocessing service\n');
         const soon = await w.call('POST', '/admin/inbox/claim', { auth: service, body: { limit: 5 } });
         check('a failed file is not handed out again at once', !soon.json.items.some((x: any) => x.id === hex(3)),
           JSON.stringify(soon.json.items));
+        const s = (await w.call('GET', '/admin/inbox/summary')).json;
+        const inSecs = s.retryAt - Math.floor(Date.now() / 1000);
+        check('and the app is told it is retrying, and when, not that it is waiting',
+          s.counts.retrying === 1 && !s.counts.ready && inSecs > 50 && inSecs <= 60, JSON.stringify(s.counts) + ` in ${inSecs}s`);
       }
       lease();
       const c = await w.call('POST', '/admin/inbox/claim', { auth: service, body: { limit: 1 } });

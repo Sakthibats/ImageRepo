@@ -304,26 +304,33 @@ function markReady(db: D1Database, id: string) {
 
 /**
  * Where uploads stand, in total and per album: the app's backlog display and
- * album badges, and the service's own logging.
+ * album badges, and the service's own logging. A file waiting out its backoff
+ * after a failed attempt counts as 'retrying', not 'ready': the service
+ * cannot take it yet, and `retryAt` says when the first one can be.
  */
 inbox.get('/summary', async (c) => {
   const album = c.req.query('album') ?? null;
+  const ts = now();
   const { results: rows } = await c.env.DB.prepare(`
-    SELECT album_id, state, COUNT(*) AS n FROM uploads WHERE (?1 IS NULL OR album_id = ?1)
-    GROUP BY album_id, state
-  `).bind(album).all<{ album_id: string; state: string; n: number }>();
+    SELECT album_id,
+           CASE WHEN state = 'ready' AND lease_until > ?2 THEN 'retrying' ELSE state END AS st,
+           COUNT(*) AS n, MIN(lease_until) AS soonest
+    FROM uploads WHERE (?1 IS NULL OR album_id = ?1)
+    GROUP BY 1, 2
+  `).bind(album, ts).all<{ album_id: string; st: string; n: number; soonest: number | null }>();
   const counts: Record<string, number> = {};
   const albums: Record<string, Record<string, number>> = {};
+  let retryAt: number | null = null;
   for (const r of rows) {
-    counts[r.state] = (counts[r.state] ?? 0) + r.n;
-    (albums[r.album_id] ??= {})[r.state] = r.n;
+    counts[r.st] = (counts[r.st] ?? 0) + r.n;
+    (albums[r.album_id] ??= {})[r.st] = r.n;
+    if (r.st === 'retrying' && r.soonest && (!retryAt || r.soonest < retryAt)) retryAt = r.soonest;
   }
   const { results: failed } = await c.env.DB.prepare(`
     SELECT id, orig_name, error, attempts, updated_at FROM uploads
     WHERE state = 'failed' AND (?1 IS NULL OR album_id = ?1)
     ORDER BY updated_at DESC LIMIT 50
   `).bind(album).all();
-  const ts = now();
   const { results: runners } = await c.env.DB.prepare(`
     SELECT name, kinds, busy, state, last_seen FROM runners
     WHERE last_seen > ?1 ORDER BY last_seen DESC LIMIT 10
@@ -331,6 +338,7 @@ inbox.get('/summary', async (c) => {
   return c.json({
     counts,
     albums,
+    retryAt,
     maxAttempts: MAX_ATTEMPTS,
     failed,
     runners: runners.map((r) => ({

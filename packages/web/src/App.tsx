@@ -90,6 +90,8 @@ function OwnerApp() {
   const albumCache = useRef(new Map<string, OwnerMediaItem[]>());
   /** Each album load is numbered; only the latest may set state. */
   const albumLoad = useRef(0);
+  /** The album a load is under way for. */
+  const loadingId = useRef<string | null>(null);
   /** Whose photos `items` holds, so a refresh can keep the grid until the new copy is whole. */
   const itemsOf = useRef<string | null>(null);
 
@@ -117,8 +119,11 @@ function OwnerApp() {
    * its count.
    */
   const loadAlbum = useCallback(async (id: string, fresh = false) => {
+    // Already on its way: a second look would only start it over.
+    if (!fresh && loadingId.current === id) return;
     const n = ++albumLoad.current;
     const live = () => albumLoad.current === n;
+    loadingId.current = id;
     try {
       const d = await fetchAlbumDetail(id);
       if (!live()) return;
@@ -140,13 +145,14 @@ function OwnerApp() {
     } catch (e) {
       if (live()) setError((e as Error).message);
     } finally {
-      if (live()) setAlbumLoading(false);
+      if (live()) { setAlbumLoading(false); loadingId.current = null; }
     }
   }, []);
 
   useEffect(() => {
     if (open) { void loadAlbum(open.id); return; }
     albumLoad.current++;
+    loadingId.current = null;
     itemsOf.current = null;
     setItems(null); setDetail(null); setAlbumLoading(false);
   }, [open?.id, loadAlbum]);
@@ -162,9 +168,10 @@ function OwnerApp() {
     setSelection(new Set());
   }, [open, loadIndex, loadAlbum]);
 
-  // An open album's uploads, or on the album list every album's. As photos
-  // finish, counts change; the open album is read again once its queue is
-  // empty, or sooner from the "new" prompt, rather than on every one.
+  // An open album's uploads, or on the album list every album's. When the
+  // number left changes, the album counts are read again (a few rows each),
+  // which is what puts up the "new" prompt; the open album's photos are read
+  // again once its queue is empty, not as each one finishes.
   const backlog = useBacklog(Boolean(open) || tab === 'albums', open?.id, (left) => {
     void loadIndex();
     if (open && left === 0) void loadAlbum(open.id);

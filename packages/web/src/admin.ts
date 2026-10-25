@@ -121,12 +121,15 @@ export type InboxStart =
 
 export interface InboxFinish { id: string; status: 'queued' | 'error'; error?: string; missing?: number[] }
 
-export type InboxCounts = Partial<Record<'uploading' | 'ready' | 'claimed' | 'failed', number>>;
+/** 'retrying': back in the queue after a failed attempt, waiting out its backoff. */
+export type InboxCounts = Partial<Record<'uploading' | 'ready' | 'retrying' | 'claimed' | 'failed', number>>;
 
 export interface InboxSummary {
   counts: InboxCounts;
   /** The same, per album; albums with no uploads are absent. */
   albums: Record<string, InboxCounts>;
+  /** When the first 'retrying' file can be taken again, epoch seconds. */
+  retryAt: number | null;
   maxAttempts: number;
   failed: { id: string; orig_name: string; error: string; attempts: number }[];
   /** Processing services seen in the last week, most recent first. */
