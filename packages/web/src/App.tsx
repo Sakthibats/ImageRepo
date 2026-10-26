@@ -16,9 +16,7 @@ import { SettingsView } from './components/SettingsView.tsx';
 import { FolderStrip, itemsIn, type FolderView } from './components/FolderStrip.tsx';
 import { shareTokenFromPath } from './share.ts';
 import { loadSort, saveSort, type SortOrder } from './tags.ts';
-
-/** Settings has no tab of its own: it is reached from the gear, not a lens on the library. */
-type Tab = 'photos' | 'albums' | 'tags' | 'settings';
+import { useRoute, type Page } from './route.ts';
 
 export default function App() {
   // A /s/<token> URL is the guest experience; everything else is the owner app.
@@ -65,13 +63,14 @@ type Dialog =
 function OwnerApp() {
   // Dates are the default way in; albums and tags are alternative lenses on
   // the same library rather than separate places things live.
-  const [tab, setTab] = useState<Tab>('photos');
+  const [route, go] = useRoute();
+  const tab = route.page;
   const [viewItems, setViewItems] = useState<OwnerMediaItem[]>([]);
   const [globalLb, setGlobalLb] = useState<{ items: OwnerMediaItem[]; index: number } | null>(null);
   const [tagOpen, setTagOpen] = useState(false);
   const [albums, setAlbums] = useState<AlbumSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [open, setOpen] = useState<AlbumSummary | null>(null);
+  const open = (route.album && albums?.find((a) => a.id === route.album)) || null;
   const [items, setItems] = useState<OwnerMediaItem[] | null>(null);
   const [detail, setDetail] = useState<AlbumDetail | null>(null);
   const [albumLoading, setAlbumLoading] = useState(false);
@@ -104,7 +103,6 @@ function OwnerApp() {
     try {
       const { albums: list } = await fetchAlbums();
       setAlbums(sortAlbums(list));
-      setOpen((cur) => (cur ? list.find((a) => a.id === cur.id) ?? null : null));
       return list;
     } catch (e) { setError((e as Error).message); return null; }
   }, []);
@@ -156,7 +154,10 @@ function OwnerApp() {
     itemsOf.current = null;
     setItems(null); setDetail(null); setAlbumLoading(false);
   }, [open?.id, loadAlbum]);
-  useEffect(() => { setSelection(new Set()); }, [open?.id]);
+  // A link to an album that is gone (deleted, or mistyped) lands on the album list.
+  useEffect(() => { if (albums && route.album && !open) go({ page: 'albums' }, true); }, [albums, route.album, open, go]);
+  // Back and forward change pages too, so leaving one drops its selection and lightbox.
+  useEffect(() => { setSelection(new Set()); setGlobalLb(null); }, [tab, open?.id]);
   // A different album starts on All photos; a refresh of the same one stays put.
   useEffect(() => { setView('all'); }, [open?.id]);
 
@@ -241,10 +242,10 @@ function OwnerApp() {
 
   const tabs = (
     <nav className="tabs" role="tablist">
-      {(['photos', 'albums', 'tags'] as Tab[]).map((t) => (
+      {(['photos', 'albums', 'tags'] as Page[]).map((t) => (
         <button key={t} role="tab" aria-selected={tab === t}
                 className={`tab ${tab === t ? 'on' : ''}`}
-                onClick={() => { setTab(t); setSelection(new Set()); window.scrollTo(0, 0); }}>
+                onClick={() => go({ page: t })}>
           {t === 'photos' ? 'Photos' : t === 'albums' ? 'Albums' : 'Tags'}
         </button>
       ))}
@@ -268,7 +269,7 @@ function OwnerApp() {
             )}
             <button className={`icon-btn gear ${tab === 'settings' ? 'on' : ''}`} title="Settings"
                     aria-label="Settings" aria-pressed={tab === 'settings'}
-                    onClick={() => { setTab('settings'); setSelection(new Set()); window.scrollTo(0, 0); }}>
+                    onClick={() => go({ page: 'settings' })}>
               ⚙
             </button>
           </div>
@@ -285,7 +286,7 @@ function OwnerApp() {
         )}
 
         {tab === 'settings' && (
-          <SettingsView onPurged={() => { albumCache.current.clear(); setOpen(null); void loadIndex(); }} />
+          <SettingsView onPurged={() => { albumCache.current.clear(); void loadIndex(); }} />
         )}
 
         {tab === 'tags' && (
@@ -318,7 +319,7 @@ function OwnerApp() {
             <div className="albums">
               {albums.map((a) => (
                 <div key={a.id} className="album fade-in">
-                  <button className="album-hit" onClick={() => { setOpen(a); window.scrollTo(0, 0); }}>
+                  <button className="album-hit" onClick={() => go({ page: 'albums', album: a.id })}>
                     <div className="album-cover">
                       {a.cover
                         ? <img src={assetUrl({ id: a.cover, r: a.coverRev }, '320')} alt="" loading="lazy" />
@@ -372,7 +373,7 @@ function OwnerApp() {
   return (
     <main>
       <header className="head">
-        <button className="back" onClick={() => setOpen(null)}>‹ Albums</button>
+        <button className="back" onClick={() => go({ page: 'albums' })}>‹ Albums</button>
         <h1>{open.title}</h1>
         <span className="muted">{open.n} items</span>
         <div className="push row-gap">
@@ -661,7 +662,6 @@ function OwnerApp() {
           onConfirm={() => {
             const media = alsoMedia;
             setDialog({ kind: 'none' });
-            setOpen(null);
             void (async () => {
               try {
                 const r = await adminApi.deleteAlbum(album.id, media);
