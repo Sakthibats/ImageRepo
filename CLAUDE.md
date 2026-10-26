@@ -43,6 +43,7 @@ packages/worker/   Hono Worker: /admin (owner + service), /a (owner reads), /s (
   src/s3.ts        presigned URLs and multipart, via R2's S3 API (aws4fetch)
   test/            Node: Hono app, D1 as SQLite, R2 as a Map, a fake S3 endpoint
 packages/web/      React + Vite, built to dist/, served by the Worker
+  src/route.ts     owner pages as paths: /photos /albums /albums/<id> /tags /settings
 Preprocessing/     Python service: claims uploads, runs the stages (photo, video)
 migrations/        every D1 change since schema.sql, numbered, additive
 deploy.sh          `./deploy.sh`: runs scripts/deploy.mts (checks, migrations, build, deploy, smoke test)
@@ -122,6 +123,10 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
   not re-read one on every processed photo.
 - D1 allows 100 bound parameters; lists of ids go in `IN (...)` chunks of 90.
   Inbox calls are capped (25 files, 20 records) to stay inside Worker limits.
+- Any path outside `run_worker_first` (`/a/*`, `/admin/*`, `/s/*`) gets the
+  app shell (wrangler.toml), which is how the web's pages need no routes. A
+  new page must not sit under those prefixes; Vite's dev proxy matches `/a/`,
+  not `/a`, so `/albums` stays with the app.
 - R2 CORS (`packages/worker/r2-cors.json`) allows PUT from the app's origin
   only; a new hostname needs adding there and re-applying.
 - vips headers report stored dimensions; EXIF orientations 5–8 mean displayed
@@ -159,10 +164,12 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 
 ## Current state (26 October 2026)
 
-- Work happens on `main`, pushed through `5646cb9`. The Worker is deployed
-  through `cc6758e` (25 Oct; later commits are the service, its image and
-  docs); migrations 001–013 applied. `cli-stages` is merged and can be
+- Work happens on `main`, pushed through `f2945c3`. The Worker is deployed
+  through `cc6758e` (25 Oct; later pushed commits are the service, its image
+  and docs); migrations 001–013 applied. `cli-stages` is merged and can be
   deleted (locally and on origin).
+- Not pushed or deployed: `b01315f`, pages in the URL (web only; typechecks
+  and builds, not yet tried in a browser). Folders are not in the URL yet.
 - Production has re-running stages (the service started its passes for
   derivatives v2, poster v1 and preview v1, and each finished at once with
   nothing behind), `?r=` in asset URLs, previews served from the largest copy
