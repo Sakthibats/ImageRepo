@@ -164,15 +164,12 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 
 ## Current state (26 October 2026)
 
-- Work happens on `main`, pushed through `f2945c3`. The Worker is deployed
-  through `cc6758e` (25 Oct; later pushed commits are the service, its image
-  and docs); migrations 001–013 applied. `cli-stages` is merged and can be
+- Work happens on `main`, pushed and deployed through `2932a66` (8 Nov);
+  migrations 001–013 applied. `cli-stages` is merged and can be
   deleted (locally and on origin).
-- Not pushed or deployed: `b01315f`, pages in the URL (web only; typechecks
-  and builds, not yet tried in a browser). Folders are not in the URL yet.
-  Also not pushed or deployed: the album list's redesign (covers without a
-  card, under year headings, with date span and folder count; `oldest` and
-  `folderCount` on `AlbumSummary`). Not tried in a browser either.
+- Deployed 8 Nov, not yet checked in a browser: pages in the URL (`b01315f`;
+  folders are not in the URL yet) and the album list's redesign (covers
+  without a card, under year headings, with date span and folder count).
 - Production has re-running stages (the service started its passes for
   derivatives v2, poster v1 and preview v1, and each finished at once with
   nothing behind), `?r=` in asset URLs, previews served from the largest copy
