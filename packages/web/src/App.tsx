@@ -31,6 +31,30 @@ function sortAlbums(albums: AlbumSummary[]): AlbumSummary[] {
     (b.newest ?? 0) - (a.newest ?? 0) || a.title.localeCompare(b.title));
 }
 
+/** Sorted albums under the year of their newest photo; empty albums, last, under their own. */
+function albumsByYear(albums: AlbumSummary[]) {
+  const out: { label: string; albums: AlbumSummary[] }[] = [];
+  for (const a of albums) {
+    const label = a.newest == null ? 'Empty' : String(new Date(a.newest * 1000).getFullYear());
+    if (out.at(-1)?.label !== label) out.push({ label, albums: [] });
+    out.at(-1)!.albums.push(a);
+  }
+  return out;
+}
+
+/** "Mar 12 – 14": the year heading above says which year, so years show only when the span crosses one. */
+function albumSpan(a: AlbumSummary): string | null {
+  if (a.oldest == null || a.newest == null) return null;
+  const from = new Date(a.oldest * 1000);
+  const to = new Date(a.newest * 1000);
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short', day: 'numeric',
+    ...(from.getFullYear() !== to.getFullYear() ? { year: 'numeric' } : {}),
+  }).formatRange(from, to);
+}
+
+const count = (n: number, one: string) => `${n.toLocaleString()} ${one}${n === 1 ? '' : 's'}`;
+
 /**
  * Publishes the sticky header's height as --head-h, so the month headings can
  * stick directly beneath it. The header wraps on narrow screens, so its height
@@ -257,7 +281,10 @@ function OwnerApp() {
     return (
       <main>
         <header className="head" ref={headRef}>
-          <h1>{tab === 'settings' ? 'Settings' : 'Photos'}</h1>
+          {/* The tabs name the other pages; a heading repeating one was noise. */}
+          <h1 className={tab === 'settings' ? undefined : 'sr-only'}>
+            {tab === 'settings' ? 'Settings' : tab === 'photos' ? 'Photos' : tab === 'albums' ? 'Albums' : 'Tags'}
+          </h1>
           {tabs}
           <div className="push row-gap">
             {(tab === 'photos' || tab === 'tags') && sortButton}
@@ -302,9 +329,7 @@ function OwnerApp() {
         {tab === 'albums' && (
           <>
             <p className="muted small res-count">
-              {albums.length === 1 ? '1 album' : `${albums.length} albums`}
-              {' · '}
-              {albums.reduce((n, a) => n + a.n, 0).toLocaleString()} photos & videos
+              {count(albums.length, 'album')} · {albums.reduce((n, a) => n + a.n, 0).toLocaleString()} photos & videos
             </p>
             {!albums.length && (
               <div className="empty fade-in">
@@ -316,35 +341,46 @@ function OwnerApp() {
                 </button>
               </div>
             )}
-            <div className="albums">
-              {albums.map((a) => (
-                <div key={a.id} className="album fade-in">
-                  <button className="album-hit" onClick={() => go({ page: 'albums', album: a.id })}>
-                    <div className="album-cover">
-                      {a.cover
-                        ? <img src={assetUrl({ id: a.cover, r: a.coverRev }, '320')} alt="" loading="lazy" />
-                        : <div className="album-blank" />}
+            {albumsByYear(albums).map((g) => (
+              <section key={g.label} className="tl-section">
+                <h2 className="tl-head">
+                  {g.label}
+                  <span className="tl-count">{g.albums.length}</span>
+                </h2>
+                <div className="albums">
+                  {g.albums.map((a) => (
+                    <div key={a.id} className="album fade-in">
+                      <button className="album-hit" onClick={() => go({ page: 'albums', album: a.id })}>
+                        <div className="album-cover">
+                          {a.cover
+                            ? <img src={assetUrl({ id: a.cover, r: a.coverRev }, '320')}
+                                   srcSet={`${assetUrl({ id: a.cover, r: a.coverRev }, '320')} 320w, ${assetUrl({ id: a.cover, r: a.coverRev }, '1024')} 1024w`}
+                                   sizes="(max-width: 680px) 50vw, 480px" alt="" loading="lazy" />
+                            : <div className="album-blank" />}
+                        </div>
+                        <div className="album-name">{a.title}</div>
+                        <div className="muted small album-meta">
+                          {[albumSpan(a), count(a.n, 'item'), a.folderCount > 0 && count(a.folderCount, 'folder')]
+                            .filter(Boolean).join(' · ')}
+                          {pending(backlog.summary?.albums[a.id]) > 0 &&
+                            ` · ${pending(backlog.summary?.albums[a.id])} to process`}
+                          {(backlog.summary?.albums[a.id]?.failed ?? 0) > 0 &&
+                            <span className="danger-text"> · {backlog.summary?.albums[a.id]?.failed} failed</span>}
+                        </div>
+                      </button>
+                      <div className="album-tools">
+                        <button className="icon-btn" title="Share"
+                                onClick={() => setDialog({ kind: 'share', album: a })}>↗</button>
+                        <button className="icon-btn" title="Rename"
+                                onClick={() => { setText(a.title); setDialog({ kind: 'renameAlbum', album: a }); }}>✎</button>
+                        <button className="icon-btn danger" title="Delete album"
+                                onClick={() => { setAlsoMedia(false); setDialog({ kind: 'confirmDeleteAlbum', album: a }); }}>🗑</button>
+                      </div>
                     </div>
-                    <div className="album-name">{a.title}</div>
-                    <div className="muted small">
-                      {a.n} items
-                      {pending(backlog.summary?.albums[a.id]) > 0 &&
-                        ` · ${pending(backlog.summary?.albums[a.id])} to process`}
-                      {(backlog.summary?.albums[a.id]?.failed ?? 0) > 0 &&
-                        <span className="danger-text"> · {backlog.summary?.albums[a.id]?.failed} failed</span>}
-                    </div>
-                  </button>
-                  <div className="album-tools">
-                    <button className="icon-btn" title="Share"
-                            onClick={() => setDialog({ kind: 'share', album: a })}>↗</button>
-                    <button className="icon-btn" title="Rename"
-                            onClick={() => { setText(a.title); setDialog({ kind: 'renameAlbum', album: a }); }}>✎</button>
-                    <button className="icon-btn danger" title="Delete album"
-                            onClick={() => { setAlsoMedia(false); setDialog({ kind: 'confirmDeleteAlbum', album: a }); }}>🗑</button>
-                  </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </section>
+            ))}
           </>
         )}
 

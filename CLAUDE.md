@@ -170,6 +170,9 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
   deleted (locally and on origin).
 - Not pushed or deployed: `b01315f`, pages in the URL (web only; typechecks
   and builds, not yet tried in a browser). Folders are not in the URL yet.
+  Also not pushed or deployed: the album list's redesign (covers without a
+  card, under year headings, with date span and folder count; `oldest` and
+  `folderCount` on `AlbumSummary`). Not tried in a browser either.
 - Production has re-running stages (the service started its passes for
   derivatives v2, poster v1 and preview v1, and each finished at once with
   nothing behind), `?r=` in asset URLs, previews served from the largest copy
