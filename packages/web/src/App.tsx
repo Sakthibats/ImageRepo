@@ -292,6 +292,7 @@ function OwnerApp() {
     return (
       <main>
         <header className="head" ref={headRef}>
+          <img className="logo" src="/logo.svg" alt="" width="34" height="34" />
           {/* The tabs name the other pages; a heading repeating one was noise. */}
           <h1 className={tab === 'settings' ? undefined : 'sr-only'}>
             {tab === 'settings' ? 'Settings' : tab === 'photos' ? 'Photos' : tab === 'albums' ? 'Albums' : 'Tags'}

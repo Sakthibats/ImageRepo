@@ -120,6 +120,7 @@ h1, h2, h3 { letter-spacing: -0.012em; }
   background: linear-gradient(90deg, var(--accent), var(--c-amber));
 }
 .head h1 { font-size: 23px; font-weight: 700; margin: 0; }
+.logo { display: block; flex: none; border-radius: 9px; box-shadow: var(--sh-sm); }
 .head h1 + .muted { position: relative; top: 1px; }
 
 .muted { color: var(--muted); }
