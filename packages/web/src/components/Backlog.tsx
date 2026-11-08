@@ -7,12 +7,14 @@ export const pending = (c: InboxCounts | undefined) => (c?.ready ?? 0) + (c?.ret
 const RETRY_BATCH = 25;
 
 /**
- * The upload queue for one album, or with no album for all of them. Polled
- * every 5s while a service is working through what it can take now,
- * otherwise every 30s: nothing changes until one runs, and one starting is
- * still noticed. `onChange` fires with how many are left whenever that
- * changes, and on the first look after starting or `check()`, so counts and
- * the open album catch up without being re-read on every poll.
+ * The upload queue for one album, or with no album for all of them. Each
+ * look reads every waiting upload's row, so it is rationed: every 30s while
+ * the count moves, doubling up to 5 min while it sits still (a service
+ * offline, a tab left open), and back to 30s once it moves or on `check()`.
+ * An empty queue costs next to nothing and stays at 30s. `onChange` fires
+ * with how many are left whenever that changes, and on the first look after
+ * starting or `check()`, so counts and the open album catch up without being
+ * re-read on every poll.
  */
 export function useBacklog(enabled: boolean, albumId: string | undefined, onChange: (left: number) => void) {
   const [summary, setSummary] = useState<InboxSummary | null>(null);
@@ -27,6 +29,7 @@ export function useBacklog(enabled: boolean, albumId: string | undefined, onChan
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     let last = Infinity;
+    let still = 0;
     const poll = async () => {
       let next = 30_000;
       if (document.visibilityState === 'visible') {
@@ -36,9 +39,9 @@ export function useBacklog(enabled: boolean, albumId: string | undefined, onChan
           setSummary(s);
           const left = pending(s.counts);
           if (left !== last) changed.current(left);
+          still = left && left === last ? still + 1 : 0;
           last = left;
-          const takeable = (s.counts.ready ?? 0) + (s.counts.claimed ?? 0);
-          if (takeable && s.runners.some((r) => r.online)) next = 5_000;
+          next = Math.min(30_000 * 2 ** still, 300_000);
         } catch { /* a blip; ask again */ }
       }
       if (!stopped) timer = setTimeout(poll, next);
