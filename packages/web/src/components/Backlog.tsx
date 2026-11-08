@@ -53,19 +53,38 @@ export function useBacklog(enabled: boolean, albumId: string | undefined, onChan
 }
 
 /**
- * One album's processing state, under its title: whether a service is
- * running, what is waiting for it, and what failed, with a retry that needs
- * no re-upload while the files are still in storage.
+ * One album's processing state, as a pill in its header: how many are left,
+ * with a bar from the most this page has seen waiting, and what failed.
+ * Opening it says which service is running, the breakdown, and offers a
+ * retry that needs no re-upload while the files are still in storage.
+ * Nothing waiting and nothing failed: no pill.
  */
 export function BacklogLine({ summary, onRetried }: { summary: InboxSummary | null; onRetried: () => void }) {
   const [note, setNote] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
+  const [open, setOpen] = useState(false);
+  const peak = useRef(0);
+  const box = useRef<HTMLDetailsElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('pointerdown', away);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('pointerdown', away); document.removeEventListener('keydown', esc); };
+  }, [open]);
+
   if (!summary) return null;
 
   const waiting = summary.counts.ready ?? 0;
   const backingOff = summary.counts.retrying ?? 0;
   const processing = summary.counts.claimed ?? 0;
   const failed = summary.counts.failed ?? 0;
+  const left = waiting + backingOff + processing;
+  peak.current = left ? Math.max(peak.current, left) : 0;
+  if (!left && !failed) return null;
+  const online = summary.runners.some((r) => r.online);
 
   const retry = async () => {
     setRetrying(true);
@@ -89,31 +108,48 @@ export function BacklogLine({ summary, onRetried }: { summary: InboxSummary | nu
   };
 
   return (
-    <div className="backlog small">
-      <ServiceStatus runners={summary.runners} waiting={waiting + backingOff + processing} />
-      {processing > 0 && <span>{processing} processing</span>}
-      {waiting > 0 && <span>{waiting} waiting</span>}
-      {backingOff > 0 && (
-        <span title="These failed once and go back to the service after a pause, which grows with each attempt">
-          {backingOff} retrying{summary.retryAt ? ` ${inAbout(summary.retryAt)}` : ''}
-        </span>
-      )}
-      {failed > 0 && (
-        <details>
-          <summary className="danger-text">{failed} failed</summary>
-          <ul className="upload-problems">
-            {summary.failed.map((f) => <li key={f.id}><b>{f.orig_name}</b>: {f.error}</li>)}
+    <details className="backlog small" ref={box} open={open}
+             onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
+      <summary className={`backlog-pill ${online ? 'ok' : 'off'}`}>
+        <span className="dot" />
+        {left > 0 && (online ? `Processing · ${left.toLocaleString()} left` : `Offline · ${left.toLocaleString()} waiting`)}
+        {failed > 0 && <span className="danger-text">{left ? ' · ' : ''}{failed} failed</span>}
+        {left > 0 && online && (
+          <span className="backlog-bar" aria-hidden="true">
+            <span style={{ width: `${Math.max(4, ((peak.current - left) / peak.current) * 100)}%` }} />
+          </span>
+        )}
+      </summary>
+      <div className="backlog-pop">
+        <ServiceStatus runners={summary.runners} waiting={left} />
+        {left > 0 && (
+          <ul className="backlog-counts">
+            {processing > 0 && <li>{processing} processing</li>}
+            {waiting > 0 && <li>{waiting} waiting</li>}
+            {backingOff > 0 && (
+              <li title="These failed once and go back to the service after a pause, which grows with each attempt">
+                {backingOff} retrying{summary.retryAt ? ` ${inAbout(summary.retryAt)}` : ''}
+              </li>
+            )}
           </ul>
-          {failed > summary.failed.length && (
-            <p className="muted">Showing the latest {summary.failed.length}; retry to see the rest.</p>
-          )}
-          <button className="btn small" disabled={retrying} onClick={() => void retry()}>
-            {retrying ? 'Retrying…' : 'Retry'}
-          </button>
-        </details>
-      )}
-      {note && <span className="muted">{note}</span>}
-    </div>
+        )}
+        {failed > 0 && (
+          <>
+            <div className="danger-text">{failed} failed</div>
+            <ul className="upload-problems">
+              {summary.failed.map((f) => <li key={f.id}><b>{f.orig_name}</b>: {f.error}</li>)}
+            </ul>
+            {failed > summary.failed.length && (
+              <p className="muted">Showing the latest {summary.failed.length}; retry to see the rest.</p>
+            )}
+            <button className="btn small" disabled={retrying} onClick={() => void retry()}>
+              {retrying ? 'Retrying…' : 'Retry'}
+            </button>
+          </>
+        )}
+        {note && <p className="muted">{note}</p>}
+      </div>
+    </details>
   );
 }
 

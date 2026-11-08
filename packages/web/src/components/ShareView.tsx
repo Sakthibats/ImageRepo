@@ -95,7 +95,6 @@ export function ShareView({ token }: { token: string }) {
     const t2 = tags.get(cover.id);
     return t2 ? guestAssetUrl(token, { ...cover, t2 }, '320') : null;
   };
-  const firstPhoto = items.find((i) => i.k === 'photo') ?? items[0];
 
   return (
     <main>
@@ -119,7 +118,7 @@ export function ShareView({ token }: { token: string }) {
       <FolderStrip
         folders={album.folders} total={album.count} loose={album.loose}
         view={view} onView={(v) => { setView(v); setLightbox(null); }}
-        coverUrl={coverUrl} allCover={firstPhoto ?? null}
+        coverUrl={coverUrl}
       />
 
       <PhotoGrid items={shown} onOpen={setLightbox} urlFor={urlFor} />

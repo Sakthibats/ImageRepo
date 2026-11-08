@@ -7,7 +7,7 @@ import { Lightbox } from './components/Lightbox.tsx';
 import { ShareView } from './components/ShareView.tsx';
 import { AdminBar, Confirm } from './components/AdminBar.tsx';
 import { ShareManager } from './components/ShareManager.tsx';
-import { Uploader } from './components/Uploader.tsx';
+import { DropBox, PageDrop, UploadStatus, useUploader } from './components/Uploader.tsx';
 import { BacklogLine, pending, useBacklog } from './components/Backlog.tsx';
 import { TimelineView } from './components/TimelineView.tsx';
 import { TagsView } from './components/TagsView.tsx';
@@ -42,14 +42,17 @@ function albumsByYear(albums: AlbumSummary[]) {
   return out;
 }
 
-/** "Mar 12 – 14": the year heading above says which year, so years show only when the span crosses one. */
-function albumSpan(a: AlbumSummary): string | null {
+/**
+ * "Mar 12 – 14". On the album list a year heading says which year, so years
+ * show only when the span crosses one; an open album asks for them always.
+ */
+function albumSpan(a: AlbumSummary, withYear = false): string | null {
   if (a.oldest == null || a.newest == null) return null;
   const from = new Date(a.oldest * 1000);
   const to = new Date(a.newest * 1000);
   return new Intl.DateTimeFormat(undefined, {
     month: 'short', day: 'numeric',
-    ...(from.getFullYear() !== to.getFullYear() ? { year: 'numeric' } : {}),
+    ...(withYear || from.getFullYear() !== to.getFullYear() ? { year: 'numeric' } : {}),
   }).formatRange(from, to);
 }
 
@@ -239,6 +242,12 @@ function OwnerApp() {
     catch (e) { notify(`Failed: ${(e as Error).message}`); }
   };
 
+  const up = useUploader({
+    albumId: open?.id, folder: folder ?? undefined,
+    // Files the library already had are filed at once; the rest arrive as they are processed.
+    onDone: () => { void loadIndex(); if (open) void loadAlbum(open.id); backlog.check(); notify('Upload complete'); },
+  });
+
   if (error) {
     return (
       <main className="center">
@@ -250,8 +259,10 @@ function OwnerApp() {
   }
   if (!albums) return <main className="center"><p className="muted">Loading…</p></main>;
 
-  const sortButton = (
-    <button className="btn small sort" title="Change the order photos are shown in"
+  const sortButton = (iconOnly = false) => (
+    <button className={`btn small sort ${iconOnly ? 'icon-only' : ''}`}
+            title={`${sort === 'asc' ? 'Oldest' : 'Newest'} first: click for ${sort === 'asc' ? 'newest' : 'oldest'} first`}
+            aria-label={sort === 'asc' ? 'Oldest first' : 'Newest first'}
             onClick={() => {
               const next: SortOrder = sort === 'asc' ? 'desc' : 'asc';
               setSort(next); saveSort(next);
@@ -260,7 +271,7 @@ function OwnerApp() {
               window.scrollTo(0, 0);
             }}>
       <span aria-hidden="true">{sort === 'asc' ? '↑' : '↓'}</span>
-      {sort === 'asc' ? 'Oldest first' : 'Newest first'}
+      {!iconOnly && (sort === 'asc' ? 'Oldest first' : 'Newest first')}
     </button>
   );
 
@@ -287,7 +298,7 @@ function OwnerApp() {
           </h1>
           {tabs}
           <div className="push row-gap">
-            {(tab === 'photos' || tab === 'tags') && sortButton}
+            {(tab === 'photos' || tab === 'tags') && sortButton()}
             {tab === 'albums' && (
               <button className="btn primary small"
                       onClick={() => { setText(''); setDialog({ kind: 'newAlbum' }); }}>
@@ -411,41 +422,37 @@ function OwnerApp() {
       <header className="head">
         <button className="back" onClick={() => go({ page: 'albums' })}>‹ Albums</button>
         <h1>{open.title}</h1>
-        <span className="muted">{open.n} items</span>
+        <span className="muted">
+          {[albumSpan(open, true), count(open.n, 'item'), folders.length > 0 && count(folders.length, 'folder')]
+            .filter(Boolean).join(' · ')}
+        </span>
+        <BacklogLine summary={backlog.summary} onRetried={backlog.check} />
         <div className="push row-gap">
-          {inView && inView.length > 1 && sortButton}
-          {!albumLoading && inView && inView.length > 0 && (
-            <button className="btn small" onClick={() =>
-              setSelection((s) => s.size === inView.length ? new Set() : new Set(inView.map((i) => i.id)))}>
-              {selection.size === inView.length ? 'Clear' : 'Select all'}
-            </button>
-          )}
-          <button className="btn small" onClick={() => { setText(''); setDialog({ kind: 'newFolder', fileIds: [] }); }}>
-            New folder
-          </button>
+          {inView && inView.length > 1 && sortButton(true)}
           <button className="btn small" onClick={() => setDialog({ kind: 'share', album: open })}>Share</button>
+          <button className="btn small primary" onClick={up.pick} disabled={up.uploading}>
+            {up.uploading ? 'Uploading…' : 'Add photos'}
+          </button>
         </div>
       </header>
+      {up.input}
+      <PageDrop up={up} label={`Drop to add to “${folder?.title ?? open.title}”`} />
+      <UploadStatus up={up} />
 
-      <BacklogLine summary={backlog.summary} onRetried={backlog.check} />
       {!albumLoading && items && open.n !== items.length && (
-        <div className="backlog small">
+        <div className="backlog-new small">
           <button className="btn small" onClick={() => void loadAlbum(open.id)}>
             {open.n > items.length ? `${(open.n - items.length).toLocaleString()} new · Show` : 'Album changed · Show'}
           </button>
         </div>
       )}
 
-      {/* Files the library already had are filed at once; the rest arrive as they are processed. */}
-      <Uploader albumId={open.id} folder={folder ?? undefined}
-                onDone={() => { void loadIndex(); void loadAlbum(open.id); backlog.check(); notify('Upload complete'); }} />
-
-      {items && detail && (
+      {items && detail && (items.length > 0 || folders.length > 0) && (
         <FolderStrip
           folders={folders} total={detail.n} loose={detail.loose}
           view={activeView} onView={changeView}
           coverUrl={(c) => assetUrl(c, '320')}
-          allCover={open.cover ? { id: open.cover, r: open.coverRev } : null}
+          onNewFolder={() => { setText(''); setDialog({ kind: 'newFolder', fileIds: [] }); }}
         />
       )}
 
@@ -473,21 +480,15 @@ function OwnerApp() {
       )}
 
       {!items || !inView ? <p className="muted center">Loading…</p>
-        : !items.length ? (
-          <div className="empty fade-in">
-            <div className="empty-art">📷</div>
-            <h2>Nothing here yet</h2>
-            <p className="muted">Drop photos above to fill this album.</p>
-          </div>
-        )
+        : !items.length ? <DropBox up={up} title="Nothing here yet" />
         : !inView.length ? (
           <div className="empty fade-in">
             <div className="empty-art">🗂</div>
             <h2>{activeView === 'loose' ? 'Every photo is in a folder' : 'This folder is empty'}</h2>
             <p className="muted">
               {activeView === 'loose'
-                ? 'Photos added while viewing All photos arrive here, outside any folder.'
-                : 'Drop photos above, or open All photos, select some, and use Move to folder.'}
+                ? 'Photos added while viewing All arrive here, outside any folder.'
+                : 'Drop photos anywhere on this page, or open All, select some, and use Move to folder.'}
             </p>
           </div>
         )
@@ -507,6 +508,8 @@ function OwnerApp() {
 
       <AdminBar
         count={selection.size}
+        total={shown?.length ?? 0}
+        onSelectAll={() => setSelection(new Set((shown ?? []).map((i) => i.id)))}
         albums={albums}
         currentAlbum={open.id}
         folders={folders}

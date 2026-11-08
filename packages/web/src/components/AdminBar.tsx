@@ -8,15 +8,18 @@ const NEW = '__new';
 
 /** Floating action bar. Appears only when something is selected. */
 export function AdminBar({
-  count, albums, currentAlbum, folders, view,
-  onClear, onMove, onRemove, onDelete, onSetCover, onTag, onFile, onNewFolder,
+  count, total, albums, currentAlbum, folders, view,
+  onClear, onSelectAll, onMove, onRemove, onDelete, onSetCover, onTag, onFile, onNewFolder,
 }: {
   count: number;
+  /** How many are in view, which Select all selects. */
+  total: number;
   albums: AlbumSummary[];
   currentAlbum: string;
   folders: FolderSummary[];
   view: FolderView;
   onClear: () => void;
+  onSelectAll: () => void;
   onMove: (to: string) => void;
   onRemove: () => void;
   onDelete: () => void;
@@ -36,6 +39,7 @@ export function AdminBar({
   return (
     <div className="actionbar" role="toolbar" aria-label="Selection actions">
       <span className="ab-count">{count} selected</span>
+      {count < total && <button className="btn small" onClick={onSelectAll}>Select all {total.toLocaleString()}</button>}
       <button className="btn small primary" onClick={onTag}>Tag</button>
       <span className="ab-sep" />
 

@@ -14,12 +14,12 @@ export function itemsIn<T extends { f?: string }>(items: T[], view: FolderView):
 }
 
 /**
- * The row of folders above an album's grid. "All photos" combines every
- * folder the viewer can see; "Loose photos" is what sits in no folder. An
- * album without folders shows no strip at all, so it looks as it always has.
+ * The row of folders above an album's grid, as pills. "All" combines every
+ * folder the viewer can see; "Loose" is what sits in no folder. Without
+ * folders there is no row, unless the owner can make one (`onNewFolder`).
  */
 export function FolderStrip({
-  folders, total, loose, view, onView, coverUrl, allCover,
+  folders, total, loose, view, onView, coverUrl, onNewFolder,
 }: {
   folders: FolderSummary[];
   total: number;
@@ -28,36 +28,38 @@ export function FolderStrip({
   onView: (view: FolderView) => void;
   /** A thumbnail URL for a cover, or null if this viewer cannot load it. */
   coverUrl: (cover: Cover) => string | null;
-  allCover: Cover | null;
+  onNewFolder?: () => void;
 }) {
-  if (!folders.length) return null;
+  if (!folders.length && !onNewFolder) return null;
   return (
     <nav className="folders fade-in" aria-label="Folders">
-      <Card title="All photos" n={total} on={view === 'all'} onClick={() => onView('all')}
-            img={allCover ? coverUrl(allCover) : null} icon="▦" />
-      {(loose > 0 || view === 'loose') && (
-        <Card title="Loose photos" n={loose} on={view === 'loose'} onClick={() => onView('loose')}
-              img={null} icon="◌" hint="Photos not in any folder" />
-      )}
-      {folders.map((f) => (
-        <Card key={f.id} title={f.title} n={f.n} on={view === f.id} onClick={() => onView(f.id)}
-              img={f.cover ? coverUrl({ id: f.cover, r: f.coverRev }) : null} icon="▢" />
-      ))}
+      {folders.length > 0 && <>
+        <Pill title="All" n={total} on={view === 'all'} onClick={() => onView('all')} />
+        {(loose > 0 || view === 'loose') && (
+          <Pill title="Loose" n={loose} on={view === 'loose'} onClick={() => onView('loose')}
+                hint="Photos not in any folder" />
+        )}
+        {folders.map((f) => (
+          <Pill key={f.id} title={f.title} n={f.n} on={view === f.id} onClick={() => onView(f.id)}
+                img={f.cover ? coverUrl({ id: f.cover, r: f.coverRev }) : null} />
+        ))}
+      </>}
+      {onNewFolder && <button className="folder new" onClick={onNewFolder}>+ New folder</button>}
     </nav>
   );
 }
 
-function Card({ title, n, on, onClick, img, icon, hint }: {
+function Pill({ title, n, on, onClick, img, hint }: {
   title: string; n: number; on: boolean; onClick: () => void;
-  img: string | null; icon: string; hint?: string;
+  img?: string | null; hint?: string;
 }) {
   return (
     <button className={`folder ${on ? 'on' : ''}`} onClick={onClick} aria-pressed={on} title={hint ?? title}>
-      <div className="folder-thumb">
-        {img ? <img src={img} alt="" loading="lazy" /> : <span aria-hidden="true">{icon}</span>}
-      </div>
-      <div className="folder-name">{title}</div>
-      <div className="folder-n">{n === 1 ? '1 item' : `${n.toLocaleString()} items`}</div>
+      {img !== undefined && (
+        <span className="folder-thumb">{img && <img src={img} alt="" loading="lazy" />}</span>
+      )}
+      <span className="folder-name">{title}</span>
+      <span className="folder-n">{n.toLocaleString()}</span>
     </button>
   );
 }
