@@ -70,6 +70,10 @@ const albums = (await w.call('GET', '/a/albums')).json.albums;
 const t = albums.find((a: any) => a.id === 'trip');
 check('the album list counts and covers each album', t.n === 34 && t.cover === trip[0] &&
   t.newest === 1_700_000_000 + 29 * 60, JSON.stringify(t));
+check('and gives its date span and folder count', t.oldest === 1_700_000_000 && t.folderCount === 1 &&
+  albums.find((a: any) => a.id === 'kids').folderCount === 0, JSON.stringify(t));
+const spanPlan = planOf(w, /MIN\(sort_ts\) FROM album_media/);
+check('the span is index seeks, not a scan of the album', /idx_am_album_sort/.test(spanPlan) && !/SCAN album_media/.test(spanPlan), spanPlan);
 check('albums are listed by title', albums.map((a: any) => a.id).join() === 'kids,trip');
 await w.call('PATCH', '/admin/albums/trip', { body: { coverId: trip[7] } });
 check('a chosen cover wins', (await w.call('GET', '/a/albums')).json.albums.find((a: any) => a.id === 'trip').cover === trip[7]);

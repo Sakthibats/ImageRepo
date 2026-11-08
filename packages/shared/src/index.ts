@@ -137,7 +137,9 @@ export interface AlbumSummary {
   cover: string | null;
   /** The cover's revision, for its URL; absent = 0. */
   coverRev?: number;
+  oldest: number | null;      // sort date of the earliest item: with newest, the album's span
   newest: number | null;      // sort date of the most recent item, for ordering
+  folderCount: number;
 }
 
 /** An open album: its folders, and how many photos sit in none. */

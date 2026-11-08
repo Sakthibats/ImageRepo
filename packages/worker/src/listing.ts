@@ -118,12 +118,18 @@ const earliest = (range: string) => `COALESCE(
 const withCoverRev = (sql: string, cover = 'q.cover') =>
   `SELECT q.*, (SELECT rev FROM media WHERE id = ${cover}) AS coverRev FROM (${sql}) q`;
 
-/** Albums with their counts, covers and newest dates, or just one: a few rows per album. */
+/**
+ * Albums with their counts, covers, date spans and folder counts, or just one:
+ * a few rows per album (MIN and MAX are seeks on idx_am_album_sort, and the
+ * folder count reads one index row per folder).
+ */
 export async function albumSummaries(db: D1Database, only?: string): Promise<AlbumSummary[]> {
   const sql = withCoverRev(`
     SELECT a.id, a.title, a.item_count AS n,
            COALESCE(a.cover_id, ${earliest('x.album_id = a.id')}) AS cover,
-           (SELECT MAX(sort_ts) FROM album_media WHERE album_id = a.id) AS newest
+           (SELECT MIN(sort_ts) FROM album_media WHERE album_id = a.id) AS oldest,
+           (SELECT MAX(sort_ts) FROM album_media WHERE album_id = a.id) AS newest,
+           (SELECT COUNT(*) FROM folders WHERE album_id = a.id) AS folderCount
     FROM albums a ${only ? 'WHERE a.id = ?1' : ''}`);
   const stmt = db.prepare(`${sql} ORDER BY q.title`);
   const { results } = await (only ? stmt.bind(only) : stmt).all<AlbumSummary & { coverRev: number | null }>();
