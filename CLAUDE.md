@@ -58,6 +58,8 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 ./deploy.sh --dry-run            # what would change; changes nothing
 ./deploy.sh                      # migrations, web build, Worker deploy, smoke test
 (cd Preprocessing && .venv/bin/python -m preprocessing doctor)               # service config check
+(cd packages/worker && npx wrangler d1 info imagerepo)                       # D1 rows read/written, last 24h
+(cd packages/worker && npx wrangler d1 insights imagerepo --time-period 7d --sort-by reads --limit 10)  # costliest queries
 ```
 
 ## Rules that must hold
@@ -141,13 +143,27 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 ## Going forward
 
 - **Free-plan budgets set the pace, not the server.** D1 allows 100k rows
-  written a day: each upload writes rows (estimated ~15–20, measure in the
-  ~1,000-file run), each running service ~4,300 a day in heartbeats, and
-  re-runs are capped at 5,000 items a day. A bigger box finishes the day's
-  quota sooner; it does not finish the library sooner.
-- **R2 is the one bill.** 10 GB is free; the full library is ~300–500 GB
-  (~$0.015/GB-month). Class A writes (1M a month free) are ~5 per photo
-  uploaded (the upload, its original, three sizes) and ~3 per re-run.
+  written a day: each upload writes ~30 (measured: 29.6–32.7 on four upload
+  days), each running service ~4,300 a day in heartbeats, and re-runs are
+  capped at 5,000 items a day. That is ~3,000 photos a day at most, ~33 days
+  for 100k. The laptop service does 10–40 photos a minute, so a day's quota
+  takes about two hours; a bigger box does not finish the library sooner.
+- **Rows read grow with the queue** (measured 8 Nov). The service's claim
+  (`state IN ('ready','claimed') … ORDER BY created_at`) cannot walk
+  `idx_uploads_state` in order, so every claim reads the whole queue; so do
+  the abandoned-upload `DELETE` before it and `/admin/inbox/summary`, which
+  an open album polls every 5s. 1,072 files queued at once read 1.27M rows
+  that day (~1,200 a photo); a few thousand at once would pass 5M a day.
+  Fix before the bulk upload.
+- **R2 is the one bill.** 10 GB is free, then ~$0.015/GB-month. Measured:
+  ~10.3 MB stored per item (camera JPEGs average 9.7 MB; phone photos are
+  smaller), so 100k is up to ~1 TB, ~$15 a month. Class A writes (1M a month
+  free) are ~5 per photo uploaded (the upload, its original, three sizes)
+  and ~3 per re-run.
+- **CPU: median 2–3 ms a request, but the slowest 1% take 15–40 ms**, over
+  the free plan's 10 ms. On 31 Oct 20 requests were stopped
+  (`exceededResources`); the uploader's retries covered them. Which route is
+  unknown: `wrangler tail` during the next batch.
 - **One `RUNNER_NAME` per machine.** Two services can run at once (claims
   are leases), but the backlog line names runners, and a stopped one is
   shown as offline. Stop the laptop's when a server takes over.
@@ -162,47 +178,40 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 - **Check before relying on any limit or price**: Hetzner raised prices and
   Oracle halved its free tier in June 2026.
 
-## Current state (26 October 2026)
+## Current state (8 November 2026)
 
-- Work happens on `main`, pushed and deployed through `2b9539b` (8 Nov);
-  migrations 001–013 applied. `cli-stages` is merged and can be
-  deleted (locally and on origin).
+- Work happens on `main`, pushed and deployed through `2b9539b`; the logo
+  (favicon, touch icon, header) is committed but not pushed or deployed.
+  Migrations 001–013 applied.
 - Deployed 8 Nov, not yet checked in a browser: pages in the URL (`b01315f`;
   folders are not in the URL yet), the album list's redesign (covers without
   a card, year headings, date span and folder count) and the album view's
   (Add photos in the header and drop anywhere, folder pills, processing as a
   header pill).
-- Production has re-running stages (the service started its passes for
-  derivatives v2, poster v1 and preview v1, and each finished at once with
-  nothing behind), `?r=` in asset URLs, previews served from the largest copy
-  a photo has, live reads (`listMedia`, no baking), the 7-day inbox fixes
-  (a gone upload fails at once, `/start` re-sends it, retries back off
-  1m/5m/30m/2h), the uploader queueing its first files as soon as they are
-  hashed, and the backlog line saying "retrying in N min" for a file backing
-  off. The owner checked it in a browser. R2 CORS and the `inbox/` lifecycle
-  rule are set.
-- Baking is fully gone: `man/` is deleted from R2 and `PREFIXES`, and 012
-  dropped `albums.manifest_ver` and `album_media.position`.
-- The library holds 13 items (12 photos, 1 video) in one album. D1 use is
-  small: about 50k rows read and 2k written a day, mostly the service polling.
+- Production also has re-running stages, `?r=` in asset URLs, previews from
+  the largest copy, live reads (`listMedia`), the 7-day inbox and retry
+  backoff (1m/5m/30m/2h). R2 CORS and the `inbox/` lifecycle rule are set.
+- The library holds 2,577 items (2,575 photos, 2 videos) in 7 albums, 26.6 GB
+  in R2 (9,609 objects), 6 MB of D1. Uploaded through the browser in batches
+  of 258–1,072 (26 Oct–8 Nov); every one processed, none failed.
 - The service runs on the laptop (`python -m preprocessing run`); not hosted.
-  The Docker image is built and tested (arm64 and amd64, the suite passes
-  inside it, `doctor` passes against production).
-- Verified end to end: photos from laptop and iPhone; the service's online and
-  offline status. Not yet: real iPhone video (HEVC/HDR, whether the picker
-  converts it), a run of ~1,000 files.
+  The Docker image is built and tested (arm64 and amd64, `doctor` passes
+  against production).
+- Verified end to end: photos from laptop and iPhone, batches of ~1,000, a
+  drone and an Android video. Not yet: real iPhone video (HEVC/HDR, whether
+  the picker converts it).
 - The owner plans to add 100k+ photos from laptop and disk, through the
   browser only (no Google Photos import), into albums with one level of
-  folders (e.g. Wedding → ROM, Religious, Group shots), staying on the free plan.
+  folders (e.g. Wedding → ROM, Religious, Group shots), staying on the free
+  plan for D1 and the Worker; R2 storage is paid beyond 10 GB.
 
 ## Planned next
 
-1. Before the bulk upload, a run of ~1,000 files including real iPhone video:
-   D1 rows read and written per photo, CPU per request, service throughput.
-   That sets the daily pace on the free plan (100k rows written a day). Also
-   decide R2 storage: 10 GB is free, 100k photos is roughly 300–500 GB
-   (about $5–7 a month). Only if the numbers say so: album pages on scroll
-   (web only, same API), version-keyed browser caching, exact upload counts.
+1. Before the bulk upload: make inbox reads independent of queue length
+   (claim, abandoned-upload sweep, summary; see Going forward), find the
+   route over 10 ms CPU, and try a real iPhone video. Then upload at up to
+   ~3,000 photos a day. Only if the numbers say so: album pages on scroll
+   (web only, same API), version-keyed browser caching.
 2. Host the service for a weeks-long upload: the Docker image on an
    always-on machine. Recommended: a machine the owner already has that never
    sleeps (free), else Hetzner CAX11 (2 ARM vCPU, 4 GB, ~€6.50/mo; CAX21 at
