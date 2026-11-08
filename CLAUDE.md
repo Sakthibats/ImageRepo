@@ -170,6 +170,9 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 - Deployed 8 Nov, not yet checked in a browser: pages in the URL (`b01315f`;
   folders are not in the URL yet) and the album list's redesign (covers
   without a card, under year headings, with date span and folder count).
+- Not pushed or deployed: `2b9539b`, the album view's redesign (Add photos
+  in the header and drop anywhere, folder pills, processing as a header pill).
+  Web only; typechecks and builds, not tried in a browser.
 - Production has re-running stages (the service started its passes for
   derivatives v2, poster v1 and preview v1, and each finished at once with
   nothing behind), `?r=` in asset URLs, previews served from the largest copy
