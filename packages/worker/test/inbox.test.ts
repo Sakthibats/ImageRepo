@@ -1,6 +1,6 @@
 // Browser uploads through presigned URLs, and the processing service's queue.
 import {
-  makeWorld, seedMedia, albumView, accessJwt, check, finish, s3State, PREPROCESS_CLIENT_ID,
+  makeWorld, seedMedia, albumView, accessJwt, check, finish, s3State, planOf, PREPROCESS_CLIENT_ID,
 } from './harness.js';
 
 type World = ReturnType<typeof makeWorld>;
@@ -223,6 +223,13 @@ console.log('\nprocessing service\n');
   lease();
   const reclaimed = await w.call('POST', '/admin/inbox/claim', { auth: service, body: { runner: 'third' } });
   check('a lapsed lease goes back in the queue', reclaimed.json.items.some((i: any) => i.id === hex(5)));
+  const claimPlan = planOf(w, /UPDATE uploads SET state = 'claimed'/);
+  check('a claim walks the queue in index order for each state, not a read and sort of all of it',
+    (claimPlan.match(/SEARCH uploads USING INDEX idx_uploads_state \(state=\?\)/g) ?? []).length === 2 &&
+    !/SCAN uploads/.test(claimPlan), claimPlan);
+  const sweepPlan = planOf(w, /DELETE FROM uploads WHERE state = 'uploading'/);
+  check('the abandoned-upload sweep seeks to the stale rows',
+    /idx_uploads_state \(state=\? AND created_at<\?\)/.test(sweepPlan), sweepPlan);
   await w.call('POST', '/admin/inbox/fail', {
     auth: service, body: { items: [{ id: hex(5), error: 'hash mismatch', permanent: true }] },
   });
@@ -243,11 +250,16 @@ console.log('\nprocessing service\n');
   check('one whose bytes are gone stays failed, counted as gone', retried.json.gone === 1 &&
     count(w, `SELECT COUNT(*) AS n FROM uploads WHERE id = '${hex(5)}' AND state = 'failed'`) === 1);
 
+  // First seen long ago: starting over must not leave it looking abandoned.
+  w.sqlite.prepare(`UPDATE uploads SET created_at = 1 WHERE id = '${hex(5)}'`).run();
   const retry = await w.call('POST', '/admin/inbox/start', {
     body: { albumId: 'trip', files: [{ id: hex(5), name: 'clip.MOV', size: 70 * MiB + 123 }] },
   });
   check('picking a failed file again starts it over', retry.json.files[0].status === 'upload' &&
     count(w, `SELECT attempts AS n FROM uploads WHERE id = '${hex(5)}'`) === 0, JSON.stringify(retry.json));
+  await w.call('POST', '/admin/inbox/claim', { auth: service, body: { limit: 1 } });
+  check('and it is a new upload: not swept as abandoned while it is sent',
+    count(w, `SELECT COUNT(*) AS n FROM uploads WHERE id = '${hex(5)}' AND state = 'uploading' AND created_at > 1`) === 1);
 
   // hex(6): waiting longer than R2 keeps inbox/, so its bytes are gone.
   const old = await w.call('POST', '/admin/inbox/start', {

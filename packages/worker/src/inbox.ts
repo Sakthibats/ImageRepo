@@ -183,7 +183,10 @@ inbox.post('/start', async (c) => {
         ON CONFLICT(id) DO UPDATE SET
           state = 'uploading', multipart_id = excluded.multipart_id, part_size = excluded.part_size,
           attempts = 0, error = NULL, runner = NULL, lease_until = NULL,
-          album_id = excluded.album_id, folder_id = excluded.folder_id, updated_at = excluded.updated_at
+          album_id = excluded.album_id, folder_id = excluded.folder_id, updated_at = excluded.updated_at,
+          -- Starting over is a new upload: the back of the queue, and the
+          -- abandoned-upload sweep (by created_at) counts from now.
+          created_at = excluded.created_at
         WHERE uploads.state = ?12
       `).bind(id, kind, ext, size, String(f.name).slice(0, 255), lastModified, b.albumId, folderId,
         multipartId, multipartId ? partSizeFor(size) : null, ts, row?.state ?? 'failed').run();
@@ -415,16 +418,30 @@ inbox.post('/claim', async (c) => {
   const runner = String(b.runner ?? 'unknown').slice(0, 40);
   const ts = now();
 
-  await c.env.DB.prepare(`DELETE FROM uploads WHERE state = 'uploading' AND updated_at < ?1`)
+  // By created_at, so it is a seek on idx_uploads_state to the stale rows,
+  // not a read of every upload still being sent. R2 drops inbox objects 7
+  // days after they were made, so that is the clock that matters anyway.
+  await c.env.DB.prepare(`DELETE FROM uploads WHERE state = 'uploading' AND created_at < ?1`)
     .bind(ts - ABANDONED_AFTER).run();
 
+  // One walk of idx_uploads_state per state, each stopping after `limit`
+  // matches: the rows read stay near `limit` however long the queue is. (One
+  // walk over both states would read and sort the whole queue on every claim.)
+  const kindIn = `kind IN (${marks(kinds.length, 5)})`;
   const { results } = await c.env.DB.prepare(`
     UPDATE uploads SET state = 'claimed', runner = ?1, lease_until = ?2, updated_at = ?3
     WHERE id IN (
-      SELECT id FROM uploads
-      WHERE state IN ('ready', 'claimed') AND COALESCE(lease_until, 0) <= ?3
-        AND kind IN (${marks(kinds.length, 5)})
-      ORDER BY created_at, id LIMIT ?4
+      SELECT id FROM (
+        SELECT id, created_at FROM (
+          SELECT id, created_at FROM uploads
+          WHERE state = 'ready' AND COALESCE(lease_until, 0) <= ?3 AND ${kindIn}
+          ORDER BY created_at LIMIT ?4)
+        UNION ALL
+        SELECT id, created_at FROM (
+          SELECT id, created_at FROM uploads
+          WHERE state = 'claimed' AND lease_until <= ?3 AND ${kindIn}
+          ORDER BY created_at LIMIT ?4)
+      ) ORDER BY created_at LIMIT ?4
     )
     RETURNING id, kind, ext, bytes, orig_name, last_modified, album_id, attempts
   `).bind(runner, ts + lease, ts, limit, ...kinds).all<{
