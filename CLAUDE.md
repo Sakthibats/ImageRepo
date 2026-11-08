@@ -148,13 +148,13 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
   capped at 5,000 items a day. That is ~3,000 photos a day at most, ~33 days
   for 100k. The laptop service does 10–40 photos a minute, so a day's quota
   takes about two hours; a bigger box does not finish the library sooner.
-- **Rows read grow with the queue** (measured 8 Nov). The service's claim
-  (`state IN ('ready','claimed') … ORDER BY created_at`) cannot walk
-  `idx_uploads_state` in order, so every claim reads the whole queue; so do
-  the abandoned-upload `DELETE` before it and `/admin/inbox/summary`, which
-  an open album polls every 5s. 1,072 files queued at once read 1.27M rows
-  that day (~1,200 a photo); a few thousand at once would pass 5M a day.
-  Fix before the bulk upload.
+- **Inbox reads are rationed** (fixed 8 Nov, after 1,072 queued files read
+  1.27M rows in a day). A claim walks `idx_uploads_state` once per state and
+  stops at its limit; the abandoned-upload sweep seeks by `created_at`.
+  `/admin/inbox/summary` still reads every waiting row, so the web polls it
+  every 30s while the count moves and backs off to 5 min while it does not:
+  ~0.3M rows for a 3,000-file day. Keep any new queue query on an index
+  range that stops early (`planOf` in `inbox.test.ts`).
 - **R2 is the one bill.** 10 GB is free, then ~$0.015/GB-month. Measured:
   ~10.3 MB stored per item (camera JPEGs average 9.7 MB; phone photos are
   smaller), so 100k is up to ~1 TB, ~$15 a month. Class A writes (1M a month
@@ -180,9 +180,8 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 
 ## Current state (8 November 2026)
 
-- Work happens on `main`, pushed and deployed through `2b9539b`; the logo
-  (favicon, touch icon, header) is committed but not pushed or deployed.
-  Migrations 001–013 applied.
+- Work happens on `main`, pushed and deployed through the inbox read fix
+  and the logo (8 Nov). Migrations 001–013 applied.
 - Deployed 8 Nov, not yet checked in a browser: pages in the URL (`b01315f`;
   folders are not in the URL yet), the album list's redesign (covers without
   a card, year headings, date span and folder count) and the album view's
@@ -207,9 +206,9 @@ npm run test:python              # just Preprocessing (needs its .venv and ffmpe
 
 ## Planned next
 
-1. Before the bulk upload: make inbox reads independent of queue length
-   (claim, abandoned-upload sweep, summary; see Going forward), find the
-   route over 10 ms CPU, and try a real iPhone video. Then upload at up to
+1. Before the bulk upload: check rows read on the next batch
+   (`wrangler d1 insights`), find the route over 10 ms CPU (`wrangler tail`
+   during that batch), and try a real iPhone video. Then upload at up to
    ~3,000 photos a day. Only if the numbers say so: album pages on scroll
    (web only, same API), version-keyed browser caching.
 2. Host the service for a weeks-long upload: the Docker image on an
